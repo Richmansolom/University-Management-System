@@ -24,9 +24,10 @@ build_app:
     - echo "Building Docker image..."
     - docker build -t $IMAGE_NAME:$IMAGE_TAG .
 
-    - echo "Saving image to tar archive..."
+    - echo "Saving Docker image to artifact..."
     - docker save $IMAGE_NAME:$IMAGE_TAG -o $IMAGE_TAR
 
+    - ls -lh $IMAGE_TAR
   artifacts:
     when: always
     paths:
@@ -37,10 +38,15 @@ generate_sbom:
   extends: .default_docker_job
   dependencies:
     - build_app
-
   script:
+    - echo "Checking for image artifact..."
+    - ls -lh
+
     - echo "Loading Docker image from artifact..."
     - docker load -i $IMAGE_TAR
+
+    - echo "Verifying image exists..."
+    - docker images
 
     - echo "Pulling Syft..."
     - docker pull anchore/syft:latest
