@@ -1,0 +1,18 @@
+{
+  "name": "University Management System",
+  "component_type": "application",
+  "language": "C++",
+  "source_file": "src/ums.cpp",
+  "binary": "university_app",
+  "version": "1.0.0",
+  "author": "Solomon",
+  "supplier": {
+    "name": "Solomon",
+    "url": "https://github.com/Richmansolom"
+  },
+  "repository": "https://github.com/Richmansolom/university-management-system",
+  "build_system": "Docker + Makefile",
+  "description": "A console-based university management system written in C++",
+  "license": "MIT",
+  "entry_point": "./university_app"
+}

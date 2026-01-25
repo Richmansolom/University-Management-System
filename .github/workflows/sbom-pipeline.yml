@@ -1,0 +1,59 @@
+name: SBOM + Vulnerability Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  sbom-security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build UMS Docker image
+        run: |
+          docker build -t ums-cpp-app:1.0 .
+
+      - name: Generate SBOM with Syft (CycloneDX)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            anchore/syft:latest ums-cpp-app:1.0 \
+            -o cyclonedx-json > sbom-cyclonedx.json
+
+      - name: Enrich SBOM with custom metadata
+        run: |
+          pwsh ./merge-sbom.ps1 `
+            -InputSbom sbom-cyclonedx.json `
+            -AppMetadata app-metadata.json `
+            -OutputSbom sbom-enriched.json
+
+      - name: Validate SBOMs with CycloneDX-CLI
+        run: |
+          docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
+          docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+
+      - name: Scan image vulnerabilities with Trivy
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ums-cpp-app:1.0
+          format: table
+          exit-code: 0
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-results
+          path: |
+            sbom-cyclonedx.json
+            sbom-enriched.json
