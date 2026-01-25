@@ -1,17 +1,18 @@
 FROM ubuntu:22.04
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    make \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Install build tools
+RUN apt-get update && \
+    apt-get install -y g++ make && \
+    rm -rf /var/lib/apt/lists/*
 
+# Set working directory
 WORKDIR /app
-COPY . .
 
-# Build using your Makefile
-RUN make
+# Copy source files
+COPY src/ums.cpp /app/ums.cpp
 
-# Adjust this if your Makefile outputs a different binary name
-CMD ["./university_app"]
+# Compile the application
+RUN g++ -std=c++17 ums.cpp -o ums
+
+# Default command
+CMD ["./ums"]
