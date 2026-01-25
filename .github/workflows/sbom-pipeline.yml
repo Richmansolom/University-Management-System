@@ -35,6 +35,7 @@ jobs:
 
       - name: Enrich SBOM with custom metadata
         run: |
+	shell:	pwsh
           pwsh ./merge-sbom.ps1 `
             -InputSbom sbom-cyclonedx.json `
             -AppMetadata app-metadata.json `
