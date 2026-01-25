@@ -66,3 +66,7 @@ ENV/
 !*.txt
 !*.json
 !*.csv
+# SBOM artifacts (generated)
+sbom/
+sbom-*.json
+
