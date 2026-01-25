@@ -1,17 +1,24 @@
 stages:
   - build
+  - sbom
 
 variables:
   IMAGE_NAME: "ums-cpp-app"
   IMAGE_TAG: "1.0"
 
-build_app:
-  stage: build
+.default_docker_job:
   image: docker:24.0.5
   services:
     - docker:24.0.5-dind
   variables:
     DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - echo "Using Docker-in-Docker"
+    - docker info
+
+build_app:
+  stage: build
+  extends: .default_docker_job
   script:
     - echo "Building C++ application Docker image..."
     - docker build -t $IMAGE_NAME:$IMAGE_TAG .
@@ -20,5 +27,36 @@ build_app:
     when: always
     paths:
       - build.log
-  after_script:
-    - echo "Build job completed."
+
+generate_sbom:
+  stage: sbom
+  extends: .default_docker_job
+  script:
+    - echo "Pulling Syft..."
+    - docker pull anchore/syft:latest
+
+    - echo "Generating CycloneDX SBOM..."
+    - docker run --rm
+        -v /var/run/docker.sock:/var/run/docker.sock
+        anchore/syft:latest $IMAGE_NAME:$IMAGE_TAG
+        -o cyclonedx-json > sbom-cyclonedx.json
+
+    - echo "Installing PowerShell..."
+    - apk add --no-cache powershell
+
+    - echo "Enriching SBOM with custom metadata..."
+    - pwsh ./merge-sbom.ps1
+        -InputSbom "sbom-cyclonedx.json"
+        -AppMetadata "app-metadata.json"
+        -OutputSbom "sbom-enriched.json"
+
+    - echo "Validating SBOMs with CycloneDX-CLI..."
+    - docker pull cyclonedx/cyclonedx-cli:latest
+    - docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
+    - docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+
+  artifacts:
+    when: always
+    paths:
+      - sbom-cyclonedx.json
+      - sbom-enriched.json
