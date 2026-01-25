@@ -31,7 +31,7 @@ The pipeline:
 5. Scans the image for OS and library vulnerabilities
 6. Publishes SBOM artifacts via GitHub Actions
 **Repository Structure**
-university-management-system/
+//university-management-system/
 ├── src/                         # C++ source files
 ├── Makefile                     # Build instructions for the app
 ├── Dockerfile                   # Builds the C++ app into a container
