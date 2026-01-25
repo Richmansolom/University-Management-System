@@ -14,6 +14,7 @@ variables:
   variables:
     DOCKER_TLS_CERTDIR: ""
   before_script:
+    - echo "Using Docker-in-Docker"
     - docker info
 
 build_app:
@@ -36,6 +37,7 @@ generate_sbom:
   extends: .default_docker_job
   dependencies:
     - build_app
+
   script:
     - echo "Loading Docker image from artifact..."
     - docker load -i $IMAGE_TAR
