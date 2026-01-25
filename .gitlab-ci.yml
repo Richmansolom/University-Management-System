@@ -27,6 +27,7 @@ build_app:
     - echo "Saving Docker image to artifact..."
     - docker save $IMAGE_NAME:$IMAGE_TAG -o $IMAGE_TAR
 
+    - echo "Listing image artifact..."
     - ls -lh $IMAGE_TAR
   artifacts:
     when: always
@@ -58,12 +59,15 @@ generate_sbom:
     - apk add --no-cache powershell
 
     - echo "Enriching SBOM..."
-    - pwsh ./merge-sbom.ps1 \
-        -InputSbom "sbom-cyclonedx.json" \
-        -AppMetadata "app-metadata.json" \
-        -OutputSbom "sbom-enriched.json"
+    - pwsh ./merge-sbom.ps1 -InputSbom "sbom-cyclonedx.json" -AppMetadata "app-metadata.json" -OutputSbom "sbom-enriched.json"
 
     - echo "Validating SBOMs..."
     - docker pull cyclonedx/cyclonedx-cli:latest
-    - docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
-    - docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+    - docker run --rm -v $(pwd):/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
+    - docker run --rm -v $(pwd):/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+
+  artifacts:
+    when: always
+    paths:
+      - sbom-cyclonedx.json
+      - sbom-enriched.json
