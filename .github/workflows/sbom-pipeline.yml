@@ -17,6 +17,11 @@ jobs:
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
 
+      - name: Install PowerShell
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y powershell
+
       - name: Build UMS Docker image
         run: |
           docker build -t ums-cpp-app:1.0 .
