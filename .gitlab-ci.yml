@@ -52,10 +52,7 @@ generate_sbom:
     - docker pull anchore/syft:latest
 
     - echo "Generating CycloneDX SBOM..."
-    - docker run --rm \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        anchore/syft:latest $IMAGE_NAME:$IMAGE_TAG \
-        -o cyclonedx-json > sbom-cyclonedx.json
+    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest $IMAGE_NAME:$IMAGE_TAG -o cyclonedx-json > sbom-cyclonedx.json
 
     - echo "Installing PowerShell..."
     - apk add --no-cache powershell
@@ -70,9 +67,3 @@ generate_sbom:
     - docker pull cyclonedx/cyclonedx-cli:latest
     - docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
     - docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
-
-  artifacts:
-    when: always
-    paths:
-      - sbom-cyclonedx.json
-      - sbom-enriched.json
