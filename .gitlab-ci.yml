@@ -5,6 +5,7 @@ stages:
 variables:
   IMAGE_NAME: "ums-cpp-app"
   IMAGE_TAG: "1.0"
+  IMAGE_TAR: "ums-image.tar"
 
 .default_docker_job:
   image: docker:24.0.5
@@ -13,44 +14,51 @@ variables:
   variables:
     DOCKER_TLS_CERTDIR: ""
   before_script:
-    - echo "Using Docker-in-Docker"
     - docker info
 
 build_app:
   stage: build
   extends: .default_docker_job
   script:
-    - echo "Building C++ application Docker image..."
+    - echo "Building Docker image..."
     - docker build -t $IMAGE_NAME:$IMAGE_TAG .
-    - echo "Docker image built successfully."
+
+    - echo "Saving image to tar archive..."
+    - docker save $IMAGE_NAME:$IMAGE_TAG -o $IMAGE_TAR
+
   artifacts:
     when: always
     paths:
-      - build.log
+      - $IMAGE_TAR
 
 generate_sbom:
   stage: sbom
   extends: .default_docker_job
+  dependencies:
+    - build_app
   script:
+    - echo "Loading Docker image from artifact..."
+    - docker load -i $IMAGE_TAR
+
     - echo "Pulling Syft..."
     - docker pull anchore/syft:latest
 
     - echo "Generating CycloneDX SBOM..."
-    - docker run --rm
-        -v /var/run/docker.sock:/var/run/docker.sock
-        anchore/syft:latest $IMAGE_NAME:$IMAGE_TAG
+    - docker run --rm \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        anchore/syft:latest $IMAGE_NAME:$IMAGE_TAG \
         -o cyclonedx-json > sbom-cyclonedx.json
 
     - echo "Installing PowerShell..."
     - apk add --no-cache powershell
 
-    - echo "Enriching SBOM with custom metadata..."
-    - pwsh ./merge-sbom.ps1
-        -InputSbom "sbom-cyclonedx.json"
-        -AppMetadata "app-metadata.json"
+    - echo "Enriching SBOM..."
+    - pwsh ./merge-sbom.ps1 \
+        -InputSbom "sbom-cyclonedx.json" \
+        -AppMetadata "app-metadata.json" \
         -OutputSbom "sbom-enriched.json"
 
-    - echo "Validating SBOMs with CycloneDX-CLI..."
+    - echo "Validating SBOMs..."
     - docker pull cyclonedx/cyclonedx-cli:latest
     - docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
     - docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
