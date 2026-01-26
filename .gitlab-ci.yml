@@ -24,19 +24,19 @@ build_app:
   extends: .default_docker_job
   script:
     - echo "Building Docker image..."
-    - docker build -t $IMAGE_NAME:$IMAGE_TAG .
+    - docker build -t "$IMAGE_NAME:$IMAGE_TAG" .
 
     - echo "Saving Docker image to artifact..."
-    - docker save $IMAGE_NAME:$IMAGE_TAG -o $IMAGE_TAR
+    - docker save "$IMAGE_NAME:$IMAGE_TAG" -o "$IMAGE_TAR"
 
-    - ls -lh $IMAGE_TAR
+    - ls -lh "$IMAGE_TAR"
   artifacts:
     when: always
     paths:
-      - $IMAGE_TAR
+      - "$IMAGE_TAR"
 
 # -------------------------------
-# STAGE 2 — RUN *YOUR* SBOM PIPELINE
+# STAGE 2 — RUN *YOUR* SBOM PIPELINE + TRIVY
 # -------------------------------
 generate_sbom:
   stage: sbom
@@ -45,12 +45,12 @@ generate_sbom:
     - build_app
   script:
     - echo "Loading Docker image from artifact..."
-    - docker load -i $IMAGE_TAR
+    - docker load -i "$IMAGE_TAR"
 
     - echo "Installing PowerShell..."
     - apk add --no-cache powershell
 
-    - echo "Installing Syft..."
+    - echo "Pulling Syft..."
     - docker pull anchore/syft:latest
 
     - echo "Running your SBOM generator..."
@@ -62,12 +62,11 @@ generate_sbom:
     - echo "Pulling Trivy..."
     - docker pull aquasec/trivy:latest
 
-    - echo "Running vulnerability scan against enriched SBOM..."
-    - docker run --rm -v "$(pwd):/data" aquasec/trivy:latest \
-        sbom /data/sbom-enriched.json --severity HIGH,CRITICAL \
-        --format table > vuln-report.txt || true
+    - echo "Running Trivy vulnerability scan on enriched SBOM..."
+    - docker run --rm -v "$PWD:/work" aquasec/trivy:latest sbom /work/sbom-enriched.json --severity HIGH,CRITICAL --format table > vuln-report.txt || true
 
-    - ls -lh *.json vuln-report.txt
+    - echo "Listing outputs..."
+    - ls -lh sbom-cyclonedx.json sbom-enriched.json vuln-report.txt
 
   artifacts:
     when: always
