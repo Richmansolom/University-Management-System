@@ -6,17 +6,19 @@ variables:
   IMAGE_NAME: "ums-cpp-app"
   IMAGE_TAG: "1.0"
   IMAGE_TAR: "ums-image.tar"
+  DOCKER_TLS_CERTDIR: ""
 
 .default_docker_job:
   image: docker:24.0.5
   services:
     - docker:24.0.5-dind
-  variables:
-    DOCKER_TLS_CERTDIR: ""
   before_script:
     - echo "Using Docker-in-Docker"
     - docker info
 
+# -------------------------------
+# STAGE 1 — BUILD IMAGE
+# -------------------------------
 build_app:
   stage: build
   extends: .default_docker_job
@@ -27,47 +29,49 @@ build_app:
     - echo "Saving Docker image to artifact..."
     - docker save $IMAGE_NAME:$IMAGE_TAG -o $IMAGE_TAR
 
-    - echo "Listing image artifact..."
     - ls -lh $IMAGE_TAR
   artifacts:
     when: always
     paths:
       - $IMAGE_TAR
 
+# -------------------------------
+# STAGE 2 — RUN *YOUR* SBOM PIPELINE
+# -------------------------------
 generate_sbom:
   stage: sbom
   extends: .default_docker_job
   dependencies:
     - build_app
   script:
-    - echo "Checking for image artifact..."
-    - ls -lh
-
     - echo "Loading Docker image from artifact..."
     - docker load -i $IMAGE_TAR
-
-    - echo "Verifying image exists..."
-    - docker images
-
-    - echo "Pulling Syft..."
-    - docker pull anchore/syft:latest
-
-    - echo "Generating CycloneDX SBOM..."
-    - docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/syft:latest $IMAGE_NAME:$IMAGE_TAG -o cyclonedx-json > sbom-cyclonedx.json
 
     - echo "Installing PowerShell..."
     - apk add --no-cache powershell
 
-    - echo "Enriching SBOM..."
-    - pwsh ./merge-sbom.ps1 -InputSbom "sbom-cyclonedx.json" -AppMetadata "app-metadata.json" -OutputSbom "sbom-enriched.json"
+    - echo "Installing Syft..."
+    - docker pull anchore/syft:latest
 
-    - echo "Validating SBOMs..."
-    - docker pull cyclonedx/cyclonedx-cli:latest
-    - docker run --rm -v $(pwd):/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
-    - docker run --rm -v $(pwd):/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+    - echo "Running your SBOM generator..."
+    - pwsh ./generate-sbom.ps1
+
+    - echo "Running your NTIA validation..."
+    - pwsh ./check-ntia.ps1 sbom-enriched.json
+
+    - echo "Pulling Trivy..."
+    - docker pull aquasec/trivy:latest
+
+    - echo "Running vulnerability scan against enriched SBOM..."
+    - docker run --rm -v "$(pwd):/data" aquasec/trivy:latest \
+        sbom /data/sbom-enriched.json --severity HIGH,CRITICAL \
+        --format table > vuln-report.txt || true
+
+    - ls -lh *.json vuln-report.txt
 
   artifacts:
     when: always
     paths:
       - sbom-cyclonedx.json
       - sbom-enriched.json
+      - vuln-report.txt
