@@ -8,7 +8,7 @@
   "author": "Solomon",
   "supplier": {
     "name": "Solomon",
-    "url": "https://github.com/Richmansolom"
+    "url": ["https://github.com/Richmansolom"]
   },
   "repository": "https://github.com/Richmansolom/university-management-system",
   "build_system": "Docker + Makefile",

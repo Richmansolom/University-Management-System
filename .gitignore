@@ -1,0 +1,8 @@
+sbom/
+reports/
+sbom-signing/ci-keys/
+sbom-signing/pq-keys/
+hoppr_*.log
+sbom/*.log
+trivy-*.json
+trivy-*.txt
