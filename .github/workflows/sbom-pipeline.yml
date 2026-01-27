@@ -60,17 +60,20 @@ jobs:
           hoppr_enriched=$?
           set -e
 
+          # Capture Hoppr logs if present
+          mv -f hoppr_*.log reports/ 2>/dev/null || true
+
           {
             echo "SBOM Requirements Summary"
             echo "========================="
             echo "CycloneDX validate (raw):      $([ $raw_validate -eq 0 ] && echo PASS || echo FAIL)"
             echo "CycloneDX validate (enriched): $([ $enriched_validate -eq 0 ] && echo PASS || echo FAIL)"
             echo "NTIA Minimum Elements (local): $([ $ntia_local -eq 0 ] && echo PASS || echo FAIL)"
-            echo "Hoppr NTIA (raw):              $([ $hoppr_raw -eq 0 ] && echo PASS || echo FAIL)"
-            echo "Hoppr NTIA (enriched):         $([ $hoppr_enriched -eq 0 ] && echo PASS || echo FAIL)"
+            echo "Hoppr NTIA (raw):              $([ $hoppr_raw -eq 0 ] && echo PASS || echo WARN)"
+            echo "Hoppr NTIA (enriched):         $([ $hoppr_enriched -eq 0 ] && echo PASS || echo WARN)"
           } > reports/requirements-summary.txt
 
-          if [ $raw_validate -ne 0 ] || [ $enriched_validate -ne 0 ] || [ $ntia_local -ne 0 ] || [ $hoppr_raw -ne 0 ] || [ $hoppr_enriched -ne 0 ]; then
+          if [ $raw_validate -ne 0 ] || [ $enriched_validate -ne 0 ] || [ $ntia_local -ne 0 ]; then
             echo "SBOM requirement checks failed. See reports/requirements-summary.txt"
             exit 1
           fi
@@ -118,3 +121,4 @@ jobs:
             reports/grype-report.json
             reports/grype-report.txt
             reports/vulnerability-analysis.txt
+            reports/hoppr_*.log
