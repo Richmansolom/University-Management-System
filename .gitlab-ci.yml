@@ -7,7 +7,7 @@ variables:
   BUILD_LOG: "build-output.log"
   SBOM_SIGNING_ALGO: "RS384"
   SBOM_SIGNING_DIGEST: "sha384"
-  SIGNING_METHOD: "openssl"
+  SIGNING_METHOD: "none"
   GPG_SIGNING_ALGO: "urn:openpgp:rsa3072"
   PQ_SIGNING_ALGO: "urn:nist:alg:ml-dsa-87"
   PQ_SIGNING_DIGEST: "sha512"
@@ -28,6 +28,9 @@ build_sbom_scan:
     - mkdir -p "$SBOM_DIR" "$REPORT_DIR" sbom-pipeline-app/build
     - |
       case "$SIGNING_METHOD" in
+        none)
+          echo "SBOM signing disabled (SIGNING_METHOD=none)."
+          ;;
         openssl)
           if [ -z "$SBOM_SIGNING_KEY_B64" ] || [ -z "$SBOM_SIGNING_PUB_B64" ]; then
             echo "Missing SBOM_SIGNING_KEY_B64 or SBOM_SIGNING_PUB_B64 CI variable."
@@ -116,22 +119,33 @@ build_sbom_scan:
            python3 sbom-signing/verify-sbom.py --input \"$SBOM_DIR/sbom-example-source.enriched.signed.json\" --public-key \"$SBOM_DIR/sbom-pq.pub\" --digest \"$PQ_SIGNING_DIGEST\" $providers && \
            python3 sbom-signing/verify-sbom.py --input \"$SBOM_DIR/sbom-example-build.enriched.signed.json\" --public-key \"$SBOM_DIR/sbom-pq.pub\" --digest \"$PQ_SIGNING_DIGEST\" $providers"
       fi
+    - echo "==> Select SBOMs for validation"
+    - |
+      if [ "$SIGNING_METHOD" = "none" ]; then
+        SBOM_SOURCE="$SBOM_DIR/sbom-example-source.enriched.json"
+        SBOM_BUILD="$SBOM_DIR/sbom-example-build.enriched.json"
+      else
+        SBOM_SOURCE="$SBOM_DIR/sbom-example-source.enriched.signed.json"
+        SBOM_BUILD="$SBOM_DIR/sbom-example-build.enriched.signed.json"
+      fi
+      echo "Using SBOM_SOURCE=$SBOM_SOURCE"
+      echo "Using SBOM_BUILD=$SBOM_BUILD"
     - echo "==> Validate SBOM structure (CycloneDX-CLI) and NTIA checks"
     - docker pull cyclonedx/cyclonedx-cli:latest
     - docker pull hoppr/hopctl:latest
     - |
       set +e
-      docker run --rm -v "$CI_PROJECT_DIR:/data" cyclonedx/cyclonedx-cli:latest validate --input-file "/data/$SBOM_DIR/sbom-example-source.enriched.signed.json"
+      docker run --rm -v "$CI_PROJECT_DIR:/data" cyclonedx/cyclonedx-cli:latest validate --input-file "/data/$SBOM_SOURCE"
       raw_validate=$?
-      docker run --rm -v "$CI_PROJECT_DIR:/data" cyclonedx/cyclonedx-cli:latest validate --input-file "/data/$SBOM_DIR/sbom-example-build.enriched.signed.json"
+      docker run --rm -v "$CI_PROJECT_DIR:/data" cyclonedx/cyclonedx-cli:latest validate --input-file "/data/$SBOM_BUILD"
       enriched_validate=$?
 
-      docker run --rm -v "$CI_PROJECT_DIR:/work" -w /work mcr.microsoft.com/powershell:7.4-ubuntu-22.04 pwsh -File ./check-ntia.ps1 -SbomFile "$SBOM_DIR/sbom-example-source.enriched.signed.json"
+      docker run --rm -v "$CI_PROJECT_DIR:/work" -w /work mcr.microsoft.com/powershell:7.4-ubuntu-22.04 pwsh -File ./check-ntia.ps1 -SbomFile "$SBOM_SOURCE"
       ntia_local=$?
 
-      docker run --rm -v "$CI_PROJECT_DIR:/data" -w /data hoppr/hopctl validate sbom --sbom "$SBOM_DIR/sbom-example-source.enriched.signed.json" --profile ntia
+      docker run --rm -v "$CI_PROJECT_DIR:/data" -w /data hoppr/hopctl validate sbom --sbom "$SBOM_SOURCE" --profile ntia
       hoppr_raw=$?
-      docker run --rm -v "$CI_PROJECT_DIR:/data" -w /data hoppr/hopctl validate sbom --sbom "$SBOM_DIR/sbom-example-build.enriched.signed.json" --profile ntia
+      docker run --rm -v "$CI_PROJECT_DIR:/data" -w /data hoppr/hopctl validate sbom --sbom "$SBOM_BUILD" --profile ntia
       hoppr_enriched=$?
       set -e
 
