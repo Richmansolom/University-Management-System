@@ -21,7 +21,11 @@ jobs:
       - name: Install PowerShell
         run: |
           sudo apt-get update
-          sudo apt-get install -y powershell
+          sudo apt-get install -y powershell jq
+
+      - name: Prepare output directories
+        run: |
+          mkdir -p reports
 
       - name: Build UMS Docker image
         run: |
@@ -38,19 +42,38 @@ jobs:
         shell: pwsh
         run: ./merge-sbom.ps1 -InputSbom sbom-cyclonedx.json -AppMetadata app-metadata.json -OutputSbom sbom-enriched.json
 
-      - name: NTIA Minimum Elements check
-        shell: pwsh
-        run: ./check-ntia.ps1 -SbomFile sbom-enriched.json
-
-      - name: Validate SBOMs with CycloneDX-CLI
+      - name: Validate SBOMs and write requirements summary
+        shell: bash
         run: |
-          docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
-          docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+          set +e
+          docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
+          raw_validate=$?
+          docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+          enriched_validate=$?
 
-      - name: NTIA validation with Hoppr (docker)
-        run: |
-          docker run --rm -v $PWD:/data -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia
-          docker run --rm -v $PWD:/data -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia
+          pwsh -File ./check-ntia.ps1 -SbomFile sbom-enriched.json
+          ntia_local=$?
+
+          docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia
+          hoppr_raw=$?
+          docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia
+          hoppr_enriched=$?
+          set -e
+
+          {
+            echo "SBOM Requirements Summary"
+            echo "========================="
+            echo "CycloneDX validate (raw):      $([ $raw_validate -eq 0 ] && echo PASS || echo FAIL)"
+            echo "CycloneDX validate (enriched): $([ $enriched_validate -eq 0 ] && echo PASS || echo FAIL)"
+            echo "NTIA Minimum Elements (local): $([ $ntia_local -eq 0 ] && echo PASS || echo FAIL)"
+            echo "Hoppr NTIA (raw):              $([ $hoppr_raw -eq 0 ] && echo PASS || echo FAIL)"
+            echo "Hoppr NTIA (enriched):         $([ $hoppr_enriched -eq 0 ] && echo PASS || echo FAIL)"
+          } > reports/requirements-summary.txt
+
+          if [ $raw_validate -ne 0 ] || [ $enriched_validate -ne 0 ] || [ $ntia_local -ne 0 ] || [ $hoppr_raw -ne 0 ] || [ $hoppr_enriched -ne 0 ]; then
+            echo "SBOM requirement checks failed. See reports/requirements-summary.txt"
+            exit 1
+          fi
 
       - name: Scan image vulnerabilities with Trivy
         uses: aquasecurity/trivy-action@0.20.0
@@ -62,6 +85,28 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
+      - name: Vulnerability scan with Grype (SBOM)
+        run: |
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-enriched.json -o json > reports/grype-report.json
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-enriched.json -o table > reports/grype-report.txt
+
+      - name: Generate vulnerability analysis summary
+        run: |
+          jq -r '
+            def count(sev): ( [ .matches[]? | select(.vulnerability.severity == sev) ] | length );
+            "Vulnerability Analysis Summary",
+            "==============================",
+            ("Total: " + ( [ .matches[]? ] | length | tostring )),
+            ("Critical: " + (count("Critical") | tostring)),
+            ("High: " + (count("High") | tostring)),
+            ("Medium: " + (count("Medium") | tostring)),
+            ("Low: " + (count("Low") | tostring)),
+            ("Negligible: " + (count("Negligible") | tostring)),
+            "",
+            "Top Findings (up to 10):",
+            ( [ .matches[]? | "\(.vulnerability.id) | \(.vulnerability.severity) | \(.artifact.name) \(.artifact.version // "")" ][0:10] | .[] )
+          ' reports/grype-report.json > reports/vulnerability-analysis.txt
+
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -69,3 +114,7 @@ jobs:
           path: |
             sbom-cyclonedx.json
             sbom-enriched.json
+            reports/requirements-summary.txt
+            reports/grype-report.json
+            reports/grype-report.txt
+            reports/vulnerability-analysis.txt
