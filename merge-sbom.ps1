@@ -11,28 +11,28 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "DEBUG: InputSbom   = $InputSbom"
-Write-Host "DEBUG: AppMetadata = $AppMetadata"
-Write-Host "DEBUG: OutputSbom  = $OutputSbom"
+function SafeStr($v) {
+  if ($null -eq $v -or [string]::IsNullOrWhiteSpace([string]$v)) { return "unknown" }
+  return [string]$v
+}
 
-# -----------------------------
-# Load inputs
-# -----------------------------
-if (-not (Test-Path $InputSbom)) { throw "❌ Input SBOM not found: $InputSbom" }
-if (-not (Test-Path $AppMetadata)) { throw "❌ App metadata not found: $AppMetadata" }
+# --- Load inputs ---
+if (-not (Test-Path $InputSbom)) { throw "Input SBOM not found: $InputSbom" }
+if (-not (Test-Path $AppMetadata)) { throw "App metadata not found: $AppMetadata" }
 
 $sbom = Get-Content $InputSbom -Raw | ConvertFrom-Json
 $app  = Get-Content $AppMetadata -Raw | ConvertFrom-Json
 
-# -----------------------------
-# Helper: force safe strings
-# -----------------------------
-function SafeStr($v) {
-  if ($null -eq $v -or $v -eq "") { return "unknown" }
-  return [string]$v
+# Ensure metadata exists and is writable
+if (-not $sbom.metadata -or ($sbom.metadata -is [string])) {
+  $sbom.metadata = [ordered]@{}
 }
 
-# Build supplier URL array for CycloneDX schema
+# Timestamp (NTIA)
+$sbom.metadata.timestamp = (Get-Date).ToString("o")
+
+# Supplier (NTIA) - ensure CycloneDX expects array for url
+$supplierName = SafeStr $app.supplier.name
 $supplierUrls = @()
 foreach ($item in @($app.supplier.url)) {
   if ($null -ne $item -and $item -ne "") {
@@ -40,27 +40,29 @@ foreach ($item in @($app.supplier.url)) {
   }
 }
 $supplierUrls = [object[]]$supplierUrls
+if ($sbom.metadata.PSObject.Properties.Name -contains "supplier") {
+  $sbom.metadata.supplier = @{ name = $supplierName; url = $supplierUrls }
+} else {
+  $sbom.metadata | Add-Member -MemberType NoteProperty -Name supplier -Value @{ name = $supplierName; url = $supplierUrls }
+}
 
-# -----------------------------
-# Build application component (for components[])
-# -----------------------------
-$appComponent = @{
+# Build a stable bom-ref for the custom app component
+$appName    = SafeStr $app.name
+$appVersion = SafeStr $app.version
+$appBomRef  = "pkg:generic/$($appName)@$($appVersion)"
+
+# --- Custom application component (NTIA: name + version + supplier/publisher) ---
+$customComponent = @{
+  "bom-ref"   = $appBomRef
   type        = "application"
-  name        = SafeStr $app.name
-  version     = SafeStr $app.version
+  name        = $appName
+  version     = $appVersion
   description = SafeStr $app.description
-  supplier    = @{
-    name = SafeStr $app.supplier.name
-    url  = $supplierUrls
-  }
-  licenses    = @(
-    @{ license = @{ id = SafeStr $app.license } }
-  )
+  publisher   = $supplierName
+  supplier    = @{ name = $supplierName; url = $supplierUrls }
+  licenses    = @(@{ license = @{ id = SafeStr $app.license } })
   externalReferences = @(
-    @{
-      type = "vcs"
-      url  = SafeStr $app.repository
-    }
+    @{ type = "vcs"; url = SafeStr $app.repository }
   )
   properties = @(
     @{ name = "language";      value = SafeStr $app.language },
@@ -71,72 +73,56 @@ $appComponent = @{
   )
 }
 
-# -----------------------------
-# Inject into components[]
-# -----------------------------
+# Ensure components array exists
 if (-not $sbom.components) {
   $sbom | Add-Member -MemberType NoteProperty -Name components -Value @()
 }
 
-$sbom.components += $appComponent
+# Add custom component if not already present
+$already = $false
+foreach ($c in $sbom.components) {
+  if ($c.name -eq $appName -and $c.version -eq $appVersion) { $already = $true; break }
+}
+if (-not $already) {
+  $sbom.components += $customComponent
+}
 
-# -----------------------------
-# NTIA COMPLIANCE: ensure component suppliers
-# -----------------------------
-foreach ($component in $sbom.components) {
-  if (-not $component.supplier) {
-    $component | Add-Member -MemberType NoteProperty -Name supplier -Value @{ name = "unknown" }
-  } elseif ([string]::IsNullOrWhiteSpace($component.supplier.name)) {
-    $component.supplier.name = "unknown"
+# NTIA-friendly: also set metadata.component (top-level product)
+$sbom.metadata.component = $customComponent
+
+# --- Dependencies (NTIA) ---
+# Create a basic dependency graph: root app depends on all other components that have bom-ref
+if (-not $sbom.dependencies) {
+  $sbom | Add-Member -MemberType NoteProperty -Name dependencies -Value @()
+}
+
+# Ensure every component has bom-ref (Syft usually does, but just in case)
+foreach ($c in $sbom.components) {
+  if (-not $c.'bom-ref') {
+    $c | Add-Member -MemberType NoteProperty -Name 'bom-ref' -Value ("anon:" + [guid]::NewGuid().ToString())
   }
 }
 
-# -----------------------------
-# NTIA COMPLIANCE: Set root metadata.component
-# -----------------------------
-$rootComponent = @{
-  type        = "application"
-  name        = SafeStr $app.name
-  version     = SafeStr $app.version
-  description = SafeStr $app.description
-  supplier    = @{
-    name = SafeStr $app.supplier.name
-    url  = $supplierUrls
+$depRefs = @()
+foreach ($c in $sbom.components) {
+  if ($c.'bom-ref' -ne $appBomRef) {
+    $depRefs += $c.'bom-ref'
   }
-  licenses    = @(
-    @{ license = @{ id = SafeStr $app.license } }
-  )
-  externalReferences = @(
-    @{
-      type = "vcs"
-      url  = SafeStr $app.repository
-    }
-  )
 }
 
-# Ensure metadata exists
-if (-not $sbom.metadata) {
-  $sbom | Add-Member -MemberType NoteProperty -Name metadata -Value @{}
+# Replace or add root dependency entry
+$rootIndex = -1
+for ($i=0; $i -lt $sbom.dependencies.Count; $i++) {
+  if ($sbom.dependencies[$i].ref -eq $appBomRef) { $rootIndex = $i; break }
 }
 
-# Ensure timestamp exists (NTIA requirement)
-if (-not $sbom.metadata.timestamp) {
-  $sbom.metadata.timestamp = (Get-Date).ToString("o")
+$rootDep = @{ ref = $appBomRef; dependsOn = $depRefs }
+if ($rootIndex -ge 0) {
+  $sbom.dependencies[$rootIndex] = $rootDep
+} else {
+  $sbom.dependencies += $rootDep
 }
 
-# Set root component (NTIA requirement)
-$sbom.metadata.component = $rootComponent
-
-# -----------------------------
-# Write enriched SBOM
-# -----------------------------
-Write-Host "DEBUG: About to write enriched SBOM to: $OutputSbom"
-
-$sbomJson = $sbom | ConvertTo-Json -Depth 30
-[System.IO.File]::WriteAllText(
-  $OutputSbom,
-  $sbomJson,
-  (New-Object System.Text.UTF8Encoding $false)
-)
-
+# --- Write enriched SBOM ---
+$sbom | ConvertTo-Json -Depth 40 | Set-Content -Path $OutputSbom -Encoding utf8
 Write-Host "✅ Enriched SBOM written to $OutputSbom"
