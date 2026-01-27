@@ -32,6 +32,15 @@ function SafeStr($v) {
   return [string]$v
 }
 
+# Build supplier URL array for CycloneDX schema
+$supplierUrls = @()
+foreach ($item in @($app.supplier.url)) {
+  if ($null -ne $item -and $item -ne "") {
+    $supplierUrls += [string]$item
+  }
+}
+$supplierUrls = [object[]]$supplierUrls
+
 # -----------------------------
 # Build application component (for components[])
 # -----------------------------
@@ -42,7 +51,7 @@ $appComponent = @{
   description = SafeStr $app.description
   supplier    = @{
     name = SafeStr $app.supplier.name
-    url  = SafeStr $app.supplier.url
+    url  = $supplierUrls
   }
   licenses    = @(
     @{ license = @{ id = SafeStr $app.license } }
@@ -72,6 +81,17 @@ if (-not $sbom.components) {
 $sbom.components += $appComponent
 
 # -----------------------------
+# NTIA COMPLIANCE: ensure component suppliers
+# -----------------------------
+foreach ($component in $sbom.components) {
+  if (-not $component.supplier) {
+    $component | Add-Member -MemberType NoteProperty -Name supplier -Value @{ name = "unknown" }
+  } elseif ([string]::IsNullOrWhiteSpace($component.supplier.name)) {
+    $component.supplier.name = "unknown"
+  }
+}
+
+# -----------------------------
 # NTIA COMPLIANCE: Set root metadata.component
 # -----------------------------
 $rootComponent = @{
@@ -81,7 +101,7 @@ $rootComponent = @{
   description = SafeStr $app.description
   supplier    = @{
     name = SafeStr $app.supplier.name
-    url  = SafeStr $app.supplier.url
+    url  = $supplierUrls
   }
   licenses    = @(
     @{ license = @{ id = SafeStr $app.license } }
@@ -112,8 +132,11 @@ $sbom.metadata.component = $rootComponent
 # -----------------------------
 Write-Host "DEBUG: About to write enriched SBOM to: $OutputSbom"
 
-$sbom |
-  ConvertTo-Json -Depth 30 |
-  Set-Content -Path $OutputSbom -Encoding utf8
+$sbomJson = $sbom | ConvertTo-Json -Depth 30
+[System.IO.File]::WriteAllText(
+  $OutputSbom,
+  $sbomJson,
+  (New-Object System.Text.UTF8Encoding $false)
+)
 
 Write-Host "✅ Enriched SBOM written to $OutputSbom"

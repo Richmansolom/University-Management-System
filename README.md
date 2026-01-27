@@ -1,6 +1,6 @@
 **SBOM + Application Security Pipeline for C/C++ Applications**
 
-(Using Docker, Syft, CycloneDX, Custom Metadata, and Trivy)
+(Using Docker, Syft, CycloneDX, Hoppr, Custom Metadata, and Trivy)
 
 1. Overview
 
@@ -12,6 +12,8 @@ Syft (SBOM generation)
 
 CycloneDX-CLI (SBOM validation)
 
+Hoppr (NTIA validation)
+
 Trivy (vulnerability scanning)
 
 Custom developed capability
@@ -20,16 +22,17 @@ A PowerShell script (merge-sbom.ps1) to enrich SBOMs with first-party applicatio
 
 The pipeline:
 
-1. Builds the C++ application into a Docker image
+1. Builds the C++ application into a Docker image (container mode) or scans a source path (native mode)
 
-2.Generates a CycloneDX SBOM from the image using Syft
+2.Generates a CycloneDX SBOM using Syft
 
 3. Enriches the SBOM with custom metadata describing the application
 
 4. Validates the raw and enriched SBOMs
 
-5. Scans the image for OS and library vulnerabilities
-6. Publishes SBOM artifacts via GitHub Actions
+5. Checks NTIA Minimum Elements (local script + optional Hoppr)
+6. Scans for OS and library vulnerabilities
+7. Publishes SBOM artifacts via GitHub Actions
 **Repository Structure**
 //university-management-system/
 ├── src/                         # C++ source files
@@ -51,10 +54,12 @@ Windows 10/11
 PowerShell 7+
 Docker Desktop
 Git
+Hoppr CLI (optional)
 **Verify:**
 docker --version
 pwsh --version
 git --version
+hopctl --version
 
 **4. Step 1 — Build the C++ App into a Docker Image
 Dockerfile**
@@ -76,11 +81,24 @@ CMD ["./university_app"]
 docker build -t ums-cpp-app:1.0 .
 docker run --rm ums-cpp-app:1.0
 
+**Quick run (scripted)**
+Container mode:
+pwsh ./generate-sbom.ps1 -Mode container -ImageName ums-cpp-app -ImageTag 1.0 -RunTrivy
+
+Native mode:
+pwsh ./generate-sbom.ps1 -Mode native -SourcePath . -RunTrivy -RunDistro2Sbom
+
 **5. Step 2 — Generate a Raw SBOM with Syft
-Command**
+Container mode**
 docker run --rm `
   -v /var/run/docker.sock:/var/run/docker.sock `
   anchore/syft:latest ums-cpp-app:1.0 `
+  -o cyclonedx-json > sbom/sbom-cyclonedx.json
+
+**Native mode**
+docker run --rm `
+  -v ${PWD}:/src `
+  anchore/syft:latest dir:/src `
   -o cyclonedx-json > sbom/sbom-cyclonedx.json
   
  ** Output**
@@ -101,7 +119,7 @@ app-metadata.json**
   "license": "MIT",
   "supplier": {
     "name": "Richman Solom",
-    "url": "https://github.com/Richmansolom"
+    "url": ["https://github.com/Richmansolom"]
   }
 }
 
@@ -140,8 +158,36 @@ docker run --rm -v ${PWD}/sbom:/data `
   cyclonedx/cyclonedx-cli:latest validate `
   --input-file /data/sbom-enriched.json
 
-  9. **Step 6 — Scan Vulnerabilities with Trivy**
-docker run --rm aquasecurity/trivy:latest image ums-cpp-app:1.0'
+**NTIA Minimum Elements (local)**
+pwsh ./check-ntia.ps1 -SbomFile sbom/sbom-enriched.json
+
+**NTIA Minimum Elements (Hoppr, optional)**
+hopctl validate sbom --sbom sbom/sbom-cyclonedx.json --profile ntia
+hopctl validate sbom --sbom sbom/sbom-enriched.json --profile ntia
+
+Hoppr via Docker:
+docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-cyclonedx.json --profile ntia
+docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-enriched.json --profile ntia
+
+**Step 6 — Sign and Distribute SBOMs**
+This repository includes a complete PKI and Web-of-Trust workflow for SBOM signing with embedded signatures (JSF). See:
+`SBOM_SIGNING_GUIDE.md`
+
+  9. **Step 7 — Scan Vulnerabilities with Trivy**
+docker run --rm aquasec/trivy:latest image ums-cpp-app:1.0
+docker run --rm -v ${PWD}:/src aquasec/trivy:latest fs /src
+
+**GitLab CI/CD Example Pipeline**
+A GitLab pipeline is included for a sample C++ project build, SBOM generation, signing, validation, and Grype scanning:
+`.gitlab-ci.yml` and `sbom-pipeline-app/`.
+
+**Optional COTS extensions**
+- Distro2SBOM for OS package SBOMs when running in native mode
+- Hoppr CLI for stricter NTIA validation profiles
+
+**Distro2SBOM (native OS packages)**
+pip install distro2sbom
+distro2sbom --distro auto --system --sbom cyclonedx --format json --output-file sbom/sbom-distro-cyclonedx.json
 
 **10. Step 7 — GitHub Actions Pipeline
 .github/workflows/sbom-pipeline.yml**

@@ -1,0 +1,18 @@
+{
+  "name": "SBOM Pipeline App",
+  "component_type": "application",
+  "language": "C++",
+  "source_file": "sbom-pipeline-app/src/main.cpp",
+  "binary": "sbom-pipeline-app/build/example_app",
+  "version": "0.1.0",
+  "author": "SBOM Demo",
+  "supplier": {
+    "name": "SBOM Demo",
+    "url": ["https://example.org/sbom-demo"]
+  },
+  "repository": "https://example.org/sbom-demo/sbom-pipeline-app",
+  "build_system": "Makefile",
+  "description": "C++ app with multi-level custom components for SBOM CI pipeline",
+  "license": "MIT",
+  "entry_point": "./sbom-pipeline-app/build/example_app"
+}

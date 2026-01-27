@@ -37,10 +37,19 @@ jobs:
         shell: pwsh
         run: ./merge-sbom.ps1 -InputSbom sbom-cyclonedx.json -AppMetadata app-metadata.json -OutputSbom sbom-enriched.json
 
+      - name: NTIA Minimum Elements check
+        shell: pwsh
+        run: ./check-ntia.ps1 -SbomFile sbom-enriched.json
+
       - name: Validate SBOMs with CycloneDX-CLI
         run: |
           docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
           docker run --rm -v $PWD:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+
+      - name: NTIA validation with Hoppr (docker)
+        run: |
+          docker run --rm -v $PWD:/data -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia
+          docker run --rm -v $PWD:/data -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia
 
       - name: Scan image vulnerabilities with Trivy
         uses: aquasecurity/trivy-action@0.20.0
