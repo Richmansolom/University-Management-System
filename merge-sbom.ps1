@@ -24,6 +24,18 @@ function Write-Utf8NoBom([string]$path, [string]$content) {
   )
 }
 
+function Normalize-ComponentLicenses($component) {
+  if (-not $component.licenses) { return }
+  foreach ($lic in @($component.licenses)) {
+    if ($lic.license -and $lic.license.PSObject.Properties.Name -contains "id") {
+      if (-not $lic.license.name -or [string]::IsNullOrWhiteSpace([string]$lic.license.name)) {
+        $lic.license.name = [string]$lic.license.id
+      }
+      $lic.license.PSObject.Properties.Remove("id")
+    }
+  }
+}
+
 # --- Load inputs ---
 if (-not (Test-Path $InputSbom)) { throw "Input SBOM not found: $InputSbom" }
 if (-not (Test-Path $AppMetadata)) { throw "App metadata not found: $AppMetadata" }
@@ -83,7 +95,7 @@ $customComponent = @{
   description = SafeStr $app.description
   publisher   = $supplierName
   supplier    = @{ name = $supplierName; url = $supplierUrls }
-  licenses    = @(@{ license = @{ id = SafeStr $app.license } })
+  licenses    = @(@{ license = @{ name = SafeStr $app.license } })
   externalReferences = @(
     @{ type = "vcs"; url = SafeStr $app.repository }
   )
@@ -112,6 +124,11 @@ if (-not $already) {
 
 # NTIA-friendly: also set metadata.component (top-level product)
 $sbom.metadata.component = $customComponent
+
+# Normalize license IDs to names to avoid non-SPDX enum failures
+foreach ($c in $sbom.components) {
+  Normalize-ComponentLicenses $c
+}
 
 # --- Dependencies (NTIA) ---
 # Create a basic dependency graph: root app depends on all other components that have bom-ref
