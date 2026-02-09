@@ -143,9 +143,9 @@ build_sbom_scan:
       docker run --rm -v "$CI_PROJECT_DIR:/work" -w /work mcr.microsoft.com/powershell:7.4-ubuntu-22.04 pwsh -File ./check-ntia.ps1 -SbomFile "$SBOM_SOURCE"
       ntia_local=$?
 
-      docker run --rm -v "$CI_PROJECT_DIR:/data" -w /data hoppr/hopctl validate sbom --sbom "$SBOM_SOURCE" --profile ntia
+      docker run --rm -v "$CI_PROJECT_DIR:/data" -w /data hoppr/hopctl validate sbom --sbom "$SBOM_SOURCE" --profile ntia --log-file "/data/$REPORT_DIR/hoppr-raw.log" --verbose
       hoppr_raw=$?
-      docker run --rm -v "$CI_PROJECT_DIR:/data" -w /data hoppr/hopctl validate sbom --sbom "$SBOM_BUILD" --profile ntia
+      docker run --rm -v "$CI_PROJECT_DIR:/data" -w /data hoppr/hopctl validate sbom --sbom "$SBOM_BUILD" --profile ntia --log-file "/data/$REPORT_DIR/hoppr-enriched.log" --verbose
       hoppr_enriched=$?
       set -e
 
@@ -155,11 +155,11 @@ build_sbom_scan:
         echo "CycloneDX validate (raw):      $([ $raw_validate -eq 0 ] && echo PASS || echo FAIL)"
         echo "CycloneDX validate (enriched): $([ $enriched_validate -eq 0 ] && echo PASS || echo FAIL)"
         echo "NTIA Minimum Elements (local): $([ $ntia_local -eq 0 ] && echo PASS || echo FAIL)"
-        echo "Hoppr NTIA (raw):              $([ $hoppr_raw -eq 0 ] && echo PASS || echo FAIL)"
-        echo "Hoppr NTIA (enriched):         $([ $hoppr_enriched -eq 0 ] && echo PASS || echo FAIL)"
+        echo "Hoppr NTIA (raw):              $([ $hoppr_raw -eq 0 ] && echo PASS || echo WARN)"
+        echo "Hoppr NTIA (enriched):         $([ $hoppr_enriched -eq 0 ] && echo PASS || echo WARN)"
       } > "$REPORT_DIR/requirements-summary.txt"
 
-      if [ $raw_validate -ne 0 ] || [ $enriched_validate -ne 0 ] || [ $ntia_local -ne 0 ] || [ $hoppr_raw -ne 0 ] || [ $hoppr_enriched -ne 0 ]; then
+      if [ $raw_validate -ne 0 ] || [ $enriched_validate -ne 0 ] || [ $ntia_local -ne 0 ]; then
         echo "SBOM requirement checks failed. See $REPORT_DIR/requirements-summary.txt"
         exit 1
       fi

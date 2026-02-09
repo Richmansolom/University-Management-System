@@ -123,22 +123,24 @@ if (Test-Path $ntiaScript) {
 $hopctl = Get-Command hopctl -ErrorAction SilentlyContinue
 if ($hopctl) {
   Write-Host "==> NTIA validation with Hoppr (hopctl)"
-  hopctl validate sbom --sbom $rawSbom --profile ntia | Out-Host
+  $hopprRawLog = Join-Path $sbomPath "hoppr-raw.log"
+  $hopprEnrichedLog = Join-Path $sbomPath "hoppr-enriched.log"
+  hopctl validate sbom --sbom $rawSbom --profile ntia --log-file $hopprRawLog --verbose | Out-Host
   $rawExit = $LASTEXITCODE
-  hopctl validate sbom --sbom $enrichedSbom --profile ntia | Out-Host
+  hopctl validate sbom --sbom $enrichedSbom --profile ntia --log-file $hopprEnrichedLog --verbose | Out-Host
   $enrichedExit = $LASTEXITCODE
   if ($rawExit -ne 0 -or $enrichedExit -ne 0) {
     Write-Host "==> Hoppr CLI failed; falling back to Hoppr Docker image"
-    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia | Out-Host
-    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia | Out-Host
+    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia --log-file /data/hoppr-raw.log --verbose | Out-Host
+    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia --log-file /data/hoppr-enriched.log --verbose | Out-Host
     $rawExit = $LASTEXITCODE
     $enrichedExit = $LASTEXITCODE
   }
 } else {
   Write-Host "==> Hoppr (hopctl) not installed; using Hoppr Docker image"
-  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia | Out-Host
+  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia --log-file /data/hoppr-raw.log --verbose | Out-Host
   $rawExit = $LASTEXITCODE
-  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia | Out-Host
+  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia --log-file /data/hoppr-enriched.log --verbose | Out-Host
   $enrichedExit = $LASTEXITCODE
 }
 

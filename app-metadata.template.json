@@ -1,0 +1,16 @@
+{
+  "name": "Your Application Name",
+  "version": "0.1.0",
+  "description": "Short description of the application",
+  "language": "C++",
+  "author": "Your Name or Team",
+  "repository": "https://github.com/your-org/your-repo",
+  "build_system": "Makefile",
+  "entry_point": "./your_binary",
+  "source_file": "src/main.cpp",
+  "license": "MIT",
+  "supplier": {
+    "name": "Your Organization",
+    "url": ["https://example.com"]
+  }
+}
