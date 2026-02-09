@@ -27,11 +27,13 @@ function Write-Utf8NoBom([string]$path, [string]$content) {
 function Normalize-ComponentLicenses($component) {
   if (-not $component.licenses) { return }
   $normalized = @()
+  $licenseNames = @()
   foreach ($lic in @($component.licenses)) {
     if ($null -eq $lic) { continue }
 
     if ($lic -is [string]) {
       $normalized += @{ license = @{ name = [string]$lic } }
+      $licenseNames += [string]$lic
       continue
     }
 
@@ -56,9 +58,21 @@ function Normalize-ComponentLicenses($component) {
       $licenseObj.PSObject.Properties.Remove("id")
     }
 
+    if ($licenseObj.name) {
+      $licenseNames += [string]$licenseObj.name
+    }
     $normalized += $lic
   }
-  $component.licenses = $normalized
+
+  if ($licenseNames.Count -gt 1) {
+    if (-not $component.properties) {
+      $component | Add-Member -MemberType NoteProperty -Name properties -Value @()
+    }
+    $component.properties += @{ name = "license.list"; value = ($licenseNames -join ", ") }
+    $component.licenses = @(@{ license = @{ name = "Multiple" } })
+  } else {
+    $component.licenses = $normalized
+  }
 }
 
 # --- Load inputs ---
