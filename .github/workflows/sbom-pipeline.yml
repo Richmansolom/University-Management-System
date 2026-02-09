@@ -38,6 +38,10 @@ jobs:
             anchore/syft:latest ums-cpp-app:1.0 \
             -o cyclonedx-json > sbom-cyclonedx.json
 
+      - name: Normalize raw SBOM licenses
+        shell: pwsh
+        run: ./normalize-sbom-licenses.ps1 -InputSbom sbom-cyclonedx.json -OutputSbom sbom-cyclonedx.normalized.json
+
       - name: Enrich SBOM with custom metadata
         shell: pwsh
         run: ./merge-sbom.ps1 -InputSbom sbom-cyclonedx.json -AppMetadata app-metadata.json -OutputSbom sbom-enriched.json
@@ -46,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
+          docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.normalized.json
           raw_validate=$?
           docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
           enriched_validate=$?
@@ -54,7 +58,7 @@ jobs:
           pwsh -File ./check-ntia.ps1 -SbomFile sbom-enriched.json
           ntia_local=$?
 
-          docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia
+          docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.normalized.json --profile ntia
           hoppr_raw=$?
           docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia
           hoppr_enriched=$?
@@ -116,6 +120,7 @@ jobs:
           name: sbom-results
           path: |
             sbom-cyclonedx.json
+            sbom-cyclonedx.normalized.json
             sbom-enriched.json
             reports/requirements-summary.txt
             reports/grype-report.json

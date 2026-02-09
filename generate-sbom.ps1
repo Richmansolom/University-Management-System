@@ -50,10 +50,12 @@ $sbomPath = Join-Path $repoRoot $SbomDir
 if (-not (Test-Path $sbomPath)) { New-Item -ItemType Directory -Path $sbomPath | Out-Null }
 
 $rawSbom      = Join-Path $sbomPath "sbom-cyclonedx.json"
+$rawSbomNormalized = Join-Path $sbomPath "sbom-cyclonedx.normalized.json"
 $enrichedSbom = Join-Path $sbomPath "sbom-enriched.json"
 $distroSbom   = Join-Path $sbomPath "sbom-distro-cyclonedx.json"
 $appMeta      = Join-Path $repoRoot $AppMetadataPath
 $mergeScript  = Join-Path $repoRoot "merge-sbom.ps1"
+$normalizeScript = Join-Path $repoRoot "normalize-sbom-licenses.ps1"
 $ntiaScript   = Join-Path $repoRoot "check-ntia.ps1"
 
 if (-not (Test-Path $appMeta)) { throw "❌ Missing app-metadata.json in repo root." }
@@ -88,6 +90,19 @@ if ($Mode -eq "container") {
 
 Write-Host "✅ Raw SBOM saved: $rawSbom"
 
+if (Test-Path $normalizeScript) {
+  Write-Host "==> Normalizing raw SBOM licenses"
+  powershell -ExecutionPolicy Bypass -File $normalizeScript `
+    -InputSbom $rawSbom `
+    -OutputSbom $rawSbomNormalized
+}
+
+if (Test-Path $rawSbomNormalized) {
+  $rawSbomForValidation = $rawSbomNormalized
+} else {
+  $rawSbomForValidation = $rawSbom
+}
+
 Write-Host "==> Enriching SBOM with custom C++ application metadata"
 Write-Host "==> Enriching SBOM with custom C++ application metadata"
 
@@ -107,7 +122,7 @@ Write-Host "==> Validating SBOMs with CycloneDX-CLI (validator)"
 
 $rawValidateExit = 0
 $enrichedValidateExit = 0
-& $containerCmd run --rm -v "${sbomPath}:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json | Out-Host
+& $containerCmd run --rm -v "${sbomPath}:/data" cyclonedx/cyclonedx-cli:latest validate --input-file ("/data/" + (Split-Path $rawSbomForValidation -Leaf)) | Out-Host
 $rawValidateExit = $LASTEXITCODE
 & $containerCmd run --rm -v "${sbomPath}:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json | Out-Host
 $enrichedValidateExit = $LASTEXITCODE
@@ -123,32 +138,39 @@ if (Test-Path $ntiaScript) {
 $hopctl = Get-Command hopctl -ErrorAction SilentlyContinue
 if ($hopctl) {
   Write-Host "==> NTIA validation with Hoppr (hopctl)"
+  if ($isWindowsOs) {
+    chcp 65001 | Out-Null
+    $env:PYTHONIOENCODING = "utf-8"
+    $env:NO_COLOR = "1"
+  }
   $hopprRawLog = Join-Path $sbomPath "hoppr-raw.log"
   $hopprEnrichedLog = Join-Path $sbomPath "hoppr-enriched.log"
-  hopctl validate sbom --sbom $rawSbom --profile ntia --log-file $hopprRawLog --verbose | Out-Host
+  hopctl validate sbom --sbom $rawSbomForValidation --profile ntia --log $hopprRawLog --verbose | Out-Host
   $rawExit = $LASTEXITCODE
-  hopctl validate sbom --sbom $enrichedSbom --profile ntia --log-file $hopprEnrichedLog --verbose | Out-Host
+  hopctl validate sbom --sbom $enrichedSbom --profile ntia --log $hopprEnrichedLog --verbose | Out-Host
   $enrichedExit = $LASTEXITCODE
   if ($rawExit -ne 0 -or $enrichedExit -ne 0) {
     Write-Host "==> Hoppr CLI failed; falling back to Hoppr Docker image"
-    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia --log-file /data/hoppr-raw.log --verbose | Out-Host
-    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia --log-file /data/hoppr-enriched.log --verbose | Out-Host
+    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom (Split-Path $rawSbomForValidation -Leaf) --profile ntia --log /data/hoppr-raw.log --verbose | Out-Host
+    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia --log /data/hoppr-enriched.log --verbose | Out-Host
     $rawExit = $LASTEXITCODE
     $enrichedExit = $LASTEXITCODE
   }
 } else {
   Write-Host "==> Hoppr (hopctl) not installed; using Hoppr Docker image"
-  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.json --profile ntia --log-file /data/hoppr-raw.log --verbose | Out-Host
+  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom (Split-Path $rawSbomForValidation -Leaf) --profile ntia --log /data/hoppr-raw.log --verbose | Out-Host
   $rawExit = $LASTEXITCODE
-  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia --log-file /data/hoppr-enriched.log --verbose | Out-Host
+  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia --log /data/hoppr-enriched.log --verbose | Out-Host
   $enrichedExit = $LASTEXITCODE
 }
 
 if ($RunTrivy) {
   Write-Host "==> Vulnerability scan with Trivy"
+  $env:TRIVY_DB_REPOSITORY = "ghcr.io/aquasecurity/trivy-db"
   if ($Mode -eq "container") {
     if ($containerCmd -eq "docker") {
       & $containerCmd run --rm `
+        -e TRIVY_DB_REPOSITORY=$env:TRIVY_DB_REPOSITORY `
         -v /var/run/docker.sock:/var/run/docker.sock `
         aquasec/trivy:latest image $image | Out-Host
     } else {
@@ -160,7 +182,9 @@ if ($RunTrivy) {
     }
   } else {
     $resolvedSource = (Resolve-Path $SourcePath).Path
-    & $containerCmd run --rm -v "${resolvedSource}:/src" aquasec/trivy:latest fs /src | Out-Host
+    & $containerCmd run --rm `
+      -e TRIVY_DB_REPOSITORY=$env:TRIVY_DB_REPOSITORY `
+      -v "${resolvedSource}:/src" aquasec/trivy:latest fs /src | Out-Host
   }
 }
 
