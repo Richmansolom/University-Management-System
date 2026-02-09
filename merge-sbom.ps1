@@ -26,14 +26,39 @@ function Write-Utf8NoBom([string]$path, [string]$content) {
 
 function Normalize-ComponentLicenses($component) {
   if (-not $component.licenses) { return }
+  $normalized = @()
   foreach ($lic in @($component.licenses)) {
-    if ($lic.license -and $lic.license.PSObject.Properties.Name -contains "id") {
-      if (-not $lic.license.name -or [string]::IsNullOrWhiteSpace([string]$lic.license.name)) {
-        $lic.license.name = [string]$lic.license.id
-      }
-      $lic.license.PSObject.Properties.Remove("id")
+    if ($null -eq $lic) { continue }
+
+    if ($lic -is [string]) {
+      $normalized += @{ license = @{ name = [string]$lic } }
+      continue
     }
+
+    $licenseObj = $lic.license
+    if ($licenseObj -is [string]) {
+      $lic.license = @{ name = [string]$licenseObj }
+      $licenseObj = $lic.license
+    } elseif (-not $licenseObj) {
+      $lic.license = @{ name = "unknown" }
+      $licenseObj = $lic.license
+    }
+
+    if (-not ($licenseObj.PSObject.Properties.Name -contains "name") -or [string]::IsNullOrWhiteSpace([string]$licenseObj.name)) {
+      if ($licenseObj.PSObject.Properties.Name -contains "id") {
+        $licenseObj | Add-Member -MemberType NoteProperty -Name name -Value ([string]$licenseObj.id) -Force
+      } else {
+        $licenseObj | Add-Member -MemberType NoteProperty -Name name -Value "unknown" -Force
+      }
+    }
+
+    if ($licenseObj.PSObject.Properties.Name -contains "id") {
+      $licenseObj.PSObject.Properties.Remove("id")
+    }
+
+    $normalized += $lic
   }
+  $component.licenses = $normalized
 }
 
 # --- Load inputs ---
