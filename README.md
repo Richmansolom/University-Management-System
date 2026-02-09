@@ -218,3 +218,8 @@ Only three files must change:
 3. `app-metadata.json`
 
 Everything else remains identical.
+
+### 17) Requirements Audit and Templates
+- `PROJECT_REQUIREMENTS_AUDIT.md` maps each project goal to implementation evidence.
+- `REUSE_CHECKLIST.md` provides a repeatable checklist for new applications.
+- `app-metadata.template.json` is a ready-to-copy metadata template.
