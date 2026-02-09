@@ -104,6 +104,47 @@ Hoppr:
 hopctl validate sbom --sbom sbom/sbom-enriched.signed.json --profile ntia
 ```
 
+## CycloneDX-CLI XML Signing (Alternative)
+CycloneDX-CLI signing works on **XML BOMs**. If your SBOM is JSON, convert it first:
+
+```
+docker run --rm -v "${PWD}:/data" cyclonedx/cyclonedx-cli:latest `
+  convert --input-file /data/sbom/sbom-enriched.json `
+  --output-file /data/sbom/sbom-enriched.xml `
+  --input-format json `
+  --output-format xml
+```
+
+Generate an RSA key pair (demo / PoC):
+```
+docker run --rm -v "${PWD}:/data" cyclonedx/cyclonedx-cli:latest `
+  keygen --private-key-file /data/sbom-signing/private.key `
+  --public-key-file /data/sbom-signing/public.key
+```
+
+Sign the XML BOM:
+```
+docker run --rm -v "${PWD}:/data" cyclonedx/cyclonedx-cli:latest `
+  sign bom /data/sbom/sbom-enriched.xml `
+  --key-file /data/sbom-signing/private.key
+```
+
+Verify the signature:
+```
+docker run --rm -v "${PWD}:/data" cyclonedx/cyclonedx-cli:latest `
+  verify all /data/sbom/sbom-enriched.xml `
+  --key-file /data/sbom-signing/public.key
+```
+
+If you need JSON again:
+```
+docker run --rm -v "${PWD}:/data" cyclonedx/cyclonedx-cli:latest `
+  convert --input-file /data/sbom/sbom-enriched.xml `
+  --output-file /data/sbom/sbom-enriched.signed.json `
+  --input-format xml `
+  --output-format json
+```
+
 ## Web-of-Trust (GnuPG) Workflow
 ### 1) Create a WOT signing key (CNSA 1.0: RSA-3072)
 ```
