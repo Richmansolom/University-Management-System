@@ -173,23 +173,19 @@ docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/
 docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-enriched.json --profile ntia
 ```
 
-### 10) Sign and Distribute SBOMs
-
-This repository includes a PKI and Web-of-Trust workflow for SBOM signing with embedded signatures (JSF). See `SBOM_SIGNING_GUIDE.md`.
-
-### 11) Scan Vulnerabilities (Trivy)
+### 10) Scan Vulnerabilities (Trivy)
 ```
 docker run --rm aquasec/trivy:latest image ums-cpp-app:1.0
 docker run --rm -v ${PWD}:/src aquasec/trivy:latest fs /src
 ```
 
-### 12) GitLab CI/CD Pipeline
+### 11) GitLab CI/CD Pipeline
 
-The GitLab pipeline builds a sample C++ project, generates SBOMs, signs and validates them, runs Hoppr NTIA checks, and scans SBOMs with Grype:
+The GitLab pipeline builds a sample C++ project, generates SBOMs, validates them, runs Hoppr NTIA checks, and scans SBOMs with Grype:
 - `.gitlab-ci.yml`
 - `sbom-pipeline-app/`
 
-### 13) Optional COTS Extensions
+### 12) Optional COTS Extensions
 - Distro2SBOM for OS package SBOMs (native mode)
 - Hoppr CLI for stricter NTIA validation profiles
 
@@ -199,18 +195,18 @@ pip install distro2sbom
 distro2sbom --distro auto --system --sbom cyclonedx --format json --output-file sbom/sbom-distro-cyclonedx.json
 ```
 
-### 14) GitHub Actions Pipeline
+### 13) GitHub Actions Pipeline
 
 `.github/workflows/sbom-pipeline.yml` provides a GitHub Actions workflow for SBOM generation and Trivy scanning.
 
-### 15) .gitignore
+### 14) .gitignore
 ```
 # SBOM artifacts (generated)
 sbom/
 sbom-*.json
 ```
 
-### 16) Reuse for Any Other C++ Project
+### 15) Reuse for Any Other C++ Project
 
 Only three files must change:
 1. `Dockerfile`
@@ -219,5 +215,5 @@ Only three files must change:
 
 Everything else remains identical.
 
-### 17) Metadata Template
+### 16) Metadata Template
 - `app-metadata.template.json` is a ready-to-copy metadata template.

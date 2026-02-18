@@ -5,14 +5,6 @@ variables:
   SBOM_DIR: "sbom"
   REPORT_DIR: "reports"
   BUILD_LOG: "build-output.log"
-  SBOM_SIGNING_ALGO: "RS384"
-  SBOM_SIGNING_DIGEST: "sha384"
-  SIGNING_METHOD: "none"
-  GPG_SIGNING_ALGO: "urn:openpgp:rsa3072"
-  PQ_SIGNING_ALGO: "urn:nist:alg:ml-dsa-87"
-  PQ_SIGNING_DIGEST: "sha512"
-  PQ_OPENSSL_IMAGE: "openquantumsafe/oqs-openssl:latest"
-  PQ_OPENSSL_PROVIDERS: "oqsprovider default"
 
 build_sbom_scan:
   stage: build
@@ -26,40 +18,6 @@ build_sbom_scan:
   before_script:
     - apk add --no-cache bash curl jq python3 openssl build-base
     - mkdir -p "$SBOM_DIR" "$REPORT_DIR" sbom-pipeline-app/build
-    - |
-      case "$SIGNING_METHOD" in
-        none)
-          echo "SBOM signing disabled (SIGNING_METHOD=none)."
-          ;;
-        openssl)
-          if [ -z "$SBOM_SIGNING_KEY_B64" ] || [ -z "$SBOM_SIGNING_PUB_B64" ]; then
-            echo "Missing SBOM_SIGNING_KEY_B64 or SBOM_SIGNING_PUB_B64 CI variable."
-            exit 1
-          fi
-          echo "$SBOM_SIGNING_KEY_B64" | base64 -d > "$SBOM_DIR/sbom-signing.key"
-          echo "$SBOM_SIGNING_PUB_B64" | base64 -d > "$SBOM_DIR/sbom-signing.pub"
-          ;;
-        gpg)
-          if [ -z "$SBOM_GPG_PRIVATE_KEY_B64" ] || [ -z "$SBOM_GPG_PUBLIC_KEY_B64" ]; then
-            echo "Missing SBOM_GPG_PRIVATE_KEY_B64 or SBOM_GPG_PUBLIC_KEY_B64 CI variable."
-            exit 1
-          fi
-          echo "$SBOM_GPG_PRIVATE_KEY_B64" | base64 -d > "$SBOM_DIR/sbom-gpg-private.asc"
-          echo "$SBOM_GPG_PUBLIC_KEY_B64" | base64 -d > "$SBOM_DIR/sbom-gpg-public.asc"
-          ;;
-        pq)
-          if [ -z "$SBOM_PQ_KEY_B64" ] || [ -z "$SBOM_PQ_PUB_B64" ]; then
-            echo "Missing SBOM_PQ_KEY_B64 or SBOM_PQ_PUB_B64 CI variable."
-            exit 1
-          fi
-          echo "$SBOM_PQ_KEY_B64" | base64 -d > "$SBOM_DIR/sbom-pq.key"
-          echo "$SBOM_PQ_PUB_B64" | base64 -d > "$SBOM_DIR/sbom-pq.pub"
-          ;;
-        *)
-          echo "Unknown SIGNING_METHOD: $SIGNING_METHOD (use openssl|gpg|pq)"
-          exit 1
-          ;;
-      esac
   script:
     - echo "==> Build example C++ application"
     - make -C sbom-pipeline-app 2>&1 | tee "$REPORT_DIR/$BUILD_LOG"
@@ -81,53 +39,10 @@ build_sbom_scan:
       -InputSbom "$SBOM_DIR/sbom-example-build.json"
       -AppMetadata "sbom-pipeline-app/app-metadata.json"
       -OutputSbom "$SBOM_DIR/sbom-example-build.enriched.json"
-    - echo "==> Sign SBOMs ($SIGNING_METHOD)"
-    - |
-      if [ "$SIGNING_METHOD" = "openssl" ]; then
-        python3 sbom-signing/sign-sbom.py --input "$SBOM_DIR/sbom-example-source.enriched.json" --output "$SBOM_DIR/sbom-example-source.enriched.signed.json" --key "$SBOM_DIR/sbom-signing.key" --algorithm "$SBOM_SIGNING_ALGO" --digest "$SBOM_SIGNING_DIGEST" --key-id "gitlab-example-signing"
-        python3 sbom-signing/sign-sbom.py --input "$SBOM_DIR/sbom-example-build.enriched.json" --output "$SBOM_DIR/sbom-example-build.enriched.signed.json" --key "$SBOM_DIR/sbom-signing.key" --algorithm "$SBOM_SIGNING_ALGO" --digest "$SBOM_SIGNING_DIGEST" --key-id "gitlab-example-signing"
-      elif [ "$SIGNING_METHOD" = "gpg" ]; then
-        docker run --rm -e SBOM_GPG_KEY_ID -e GPG_SIGNING_ALGO -v "$CI_PROJECT_DIR:/work" -w /work mcr.microsoft.com/powershell:7.4-ubuntu-22.04 bash -lc \
-          "apt-get update >/dev/null && apt-get install -y gnupg openssl >/dev/null && \
-           gpg --batch --import sbom/sbom-gpg-private.asc >/dev/null && \
-           pwsh -File sbom-signing/sign-sbom.ps1 -Signer gpg -Algorithm \"$GPG_SIGNING_ALGO\" -GpgKeyId \"$SBOM_GPG_KEY_ID\" -InputSbom \"$SBOM_DIR/sbom-example-source.enriched.json\" -OutputSbom \"$SBOM_DIR/sbom-example-source.enriched.signed.json\" && \
-           pwsh -File sbom-signing/sign-sbom.ps1 -Signer gpg -Algorithm \"$GPG_SIGNING_ALGO\" -GpgKeyId \"$SBOM_GPG_KEY_ID\" -InputSbom \"$SBOM_DIR/sbom-example-build.enriched.json\" -OutputSbom \"$SBOM_DIR/sbom-example-build.enriched.signed.json\""
-      elif [ "$SIGNING_METHOD" = "pq" ]; then
-        providers=""
-        for p in $PQ_OPENSSL_PROVIDERS; do providers="$providers --openssl-provider $p"; done
-        docker run --rm -v "$CI_PROJECT_DIR:/work" -w /work "$PQ_OPENSSL_IMAGE" /bin/sh -lc \
-          "command -v python3 >/dev/null 2>&1 || (apt-get update >/dev/null && apt-get install -y python3 >/dev/null); \
-           python3 sbom-signing/sign-sbom.py --input \"$SBOM_DIR/sbom-example-source.enriched.json\" --output \"$SBOM_DIR/sbom-example-source.enriched.signed.json\" --key \"$SBOM_DIR/sbom-pq.key\" --algorithm \"$PQ_SIGNING_ALGO\" --digest \"$PQ_SIGNING_DIGEST\" $providers && \
-           python3 sbom-signing/sign-sbom.py --input \"$SBOM_DIR/sbom-example-build.enriched.json\" --output \"$SBOM_DIR/sbom-example-build.enriched.signed.json\" --key \"$SBOM_DIR/sbom-pq.key\" --algorithm \"$PQ_SIGNING_ALGO\" --digest \"$PQ_SIGNING_DIGEST\" $providers"
-      fi
-    - echo "==> Verify SBOM signature ($SIGNING_METHOD)"
-    - |
-      if [ "$SIGNING_METHOD" = "openssl" ]; then
-        python3 sbom-signing/verify-sbom.py --input "$SBOM_DIR/sbom-example-source.enriched.signed.json" --public-key "$SBOM_DIR/sbom-signing.pub" --digest "$SBOM_SIGNING_DIGEST"
-        python3 sbom-signing/verify-sbom.py --input "$SBOM_DIR/sbom-example-build.enriched.signed.json" --public-key "$SBOM_DIR/sbom-signing.pub" --digest "$SBOM_SIGNING_DIGEST"
-      elif [ "$SIGNING_METHOD" = "gpg" ]; then
-        docker run --rm -v "$CI_PROJECT_DIR:/work" -w /work mcr.microsoft.com/powershell:7.4-ubuntu-22.04 bash -lc \
-          "apt-get update >/dev/null && apt-get install -y gnupg openssl >/dev/null && \
-           gpg --batch --import sbom/sbom-gpg-public.asc >/dev/null && \
-           pwsh -File sbom-signing/verify-sbom.ps1 -Signer gpg -InputSbom \"$SBOM_DIR/sbom-example-source.enriched.signed.json\" && \
-           pwsh -File sbom-signing/verify-sbom.ps1 -Signer gpg -InputSbom \"$SBOM_DIR/sbom-example-build.enriched.signed.json\""
-      elif [ "$SIGNING_METHOD" = "pq" ]; then
-        providers=""
-        for p in $PQ_OPENSSL_PROVIDERS; do providers="$providers --openssl-provider $p"; done
-        docker run --rm -v "$CI_PROJECT_DIR:/work" -w /work "$PQ_OPENSSL_IMAGE" /bin/sh -lc \
-          "command -v python3 >/dev/null 2>&1 || (apt-get update >/dev/null && apt-get install -y python3 >/dev/null); \
-           python3 sbom-signing/verify-sbom.py --input \"$SBOM_DIR/sbom-example-source.enriched.signed.json\" --public-key \"$SBOM_DIR/sbom-pq.pub\" --digest \"$PQ_SIGNING_DIGEST\" $providers && \
-           python3 sbom-signing/verify-sbom.py --input \"$SBOM_DIR/sbom-example-build.enriched.signed.json\" --public-key \"$SBOM_DIR/sbom-pq.pub\" --digest \"$PQ_SIGNING_DIGEST\" $providers"
-      fi
     - echo "==> Select SBOMs for validation"
     - |
-      if [ "$SIGNING_METHOD" = "none" ]; then
-        SBOM_SOURCE="$SBOM_DIR/sbom-example-source.enriched.json"
-        SBOM_BUILD="$SBOM_DIR/sbom-example-build.enriched.json"
-      else
-        SBOM_SOURCE="$SBOM_DIR/sbom-example-source.enriched.signed.json"
-        SBOM_BUILD="$SBOM_DIR/sbom-example-build.enriched.signed.json"
-      fi
+      SBOM_SOURCE="$SBOM_DIR/sbom-example-source.enriched.json"
+      SBOM_BUILD="$SBOM_DIR/sbom-example-build.enriched.json"
       echo "Using SBOM_SOURCE=$SBOM_SOURCE"
       echo "Using SBOM_BUILD=$SBOM_BUILD"
     - echo "==> Validate SBOM structure (CycloneDX-CLI) and NTIA checks"
