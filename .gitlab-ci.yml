@@ -45,6 +45,32 @@ build_sbom_scan:
       SBOM_BUILD="$SBOM_DIR/sbom-example-build.enriched.json"
       echo "Using SBOM_SOURCE=$SBOM_SOURCE"
       echo "Using SBOM_BUILD=$SBOM_BUILD"
+    - echo "==> Sign SBOMs and validate signatures"
+    - |
+      set -e
+      SBOM_SOURCE="$SBOM_DIR/sbom-example-source.enriched.json"
+      SBOM_BUILD="$SBOM_DIR/sbom-example-build.enriched.json"
+      SIGN_DIR="$SBOM_DIR/signatures"
+      SIGN_KEY="$SIGN_DIR/sbom-signing-private.pem"
+      SIGN_PUB="$SIGN_DIR/sbom-signing-public.pem"
+      mkdir -p "$SIGN_DIR"
+
+      openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$SIGN_KEY"
+      openssl pkey -in "$SIGN_KEY" -pubout -out "$SIGN_PUB"
+
+      for sbom in "$SBOM_SOURCE" "$SBOM_BUILD"; do
+        sbom_name="$(basename "$sbom")"
+        sbom_sig="$SIGN_DIR/$sbom_name.sig"
+        verify_report="$REPORT_DIR/$sbom_name.signature-check.txt"
+
+        openssl dgst -sha256 -sign "$SIGN_KEY" -out "$sbom_sig" "$sbom"
+        if openssl dgst -sha256 -verify "$SIGN_PUB" -signature "$sbom_sig" "$sbom" > "$verify_report" 2>&1; then
+          echo "Signature validation passed for $sbom_name" | tee -a "$verify_report"
+        else
+          echo "Signature validation failed for $sbom_name" | tee -a "$verify_report"
+          exit 1
+        fi
+      done
     - echo "==> Validate SBOM structure (CycloneDX-CLI) and NTIA checks"
     - docker pull cyclonedx/cyclonedx-cli:latest
     - docker pull hoppr/hopctl:latest
