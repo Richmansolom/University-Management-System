@@ -36,8 +36,12 @@ university-management-system/
 ├── generate-sbom.ps1            # Local orchestration script
 ├── check-ntia.ps1               # NTIA Minimum Elements checks
 ├── sbom/                        # Generated SBOM outputs (gitignored)
-│   ├── sbom-cyclonedx.json
-│   └── sbom-enriched.json
+│   ├── sbom-app.raw.json
+│   ├── sbom-app.normalized.json
+│   ├── sbom-app.enriched.json
+│   ├── sbom-image.raw.json
+│   ├── sbom-image.normalized.json
+│   └── sbom-image.enriched.json
 ├── .gitlab-ci.yml               # GitLab CI pipeline
 └── .github/
     └── workflows/
@@ -95,22 +99,22 @@ pwsh ./generate-sbom.ps1 -Mode container -ImageName ums-cpp-app -ImageTag 1.0 -R
 pwsh ./generate-sbom.ps1 -Mode native -SourcePath . -RunTrivy -RunDistro2Sbom
 ```
 
-### 6) Generate a Raw SBOM with Syft
+### 6) Generate Raw SBOMs with Syft (App + Image)
 
-**Container mode**
+**Container mode (image SBOM)**
 ```
 docker run --rm `
   -v /var/run/docker.sock:/var/run/docker.sock `
   anchore/syft:latest ums-cpp-app:1.0 `
-  -o cyclonedx-json > sbom/sbom-cyclonedx.json
+  -o cyclonedx-json > sbom/sbom-image.raw.json
 ```
 
-**Native mode**
+**Native mode (source SBOM)**
 ```
 docker run --rm `
   -v ${PWD}:/src `
   anchore/syft:latest dir:/src `
-  -o cyclonedx-json > sbom/sbom-cyclonedx.json
+  -o cyclonedx-json > sbom/sbom-app.raw.json
 ```
 
 ### 7) Define Custom Application Metadata
@@ -137,14 +141,14 @@ docker run --rm `
 
 ### 8) Enrich the SBOM with Custom Metadata
 
-`merge-sbom.ps1` loads the Syft SBOM and `app-metadata.json`, injects a CycloneDX application component, and writes `sbom-enriched.json`.
+`merge-sbom.ps1` loads the Syft SBOM and `app-metadata.json`, injects a CycloneDX application component, and writes enriched SBOMs for both app and image scans.
 
 **Manual execution**
 ```
 pwsh ./merge-sbom.ps1 `
-  -InputSbom sbom/sbom-cyclonedx.json `
+  -InputSbom sbom/sbom-app.raw.json `
   -AppMetadata app-metadata.json `
-  -OutputSbom sbom/sbom-enriched.json
+  -OutputSbom sbom/sbom-app.enriched.json
 ```
 
 ### 9) Validate SBOMs
@@ -152,25 +156,32 @@ pwsh ./merge-sbom.ps1 `
 **CycloneDX-CLI**
 ```
 docker pull cyclonedx/cyclonedx-cli:latest
-docker run --rm -v ${PWD}/sbom:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.json
-docker run --rm -v ${PWD}/sbom:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
+docker run --rm -v ${PWD}/sbom:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-app.normalized.json
+docker run --rm -v ${PWD}/sbom:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-app.enriched.json
+docker run --rm -v ${PWD}/sbom:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-image.normalized.json
+docker run --rm -v ${PWD}/sbom:/data cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-image.enriched.json
 ```
 
 **NTIA Minimum Elements (local)**
 ```
-pwsh ./check-ntia.ps1 -SbomFile sbom/sbom-enriched.json
+pwsh ./check-ntia.ps1 -SbomFile sbom/sbom-app.enriched.json
+pwsh ./check-ntia.ps1 -SbomFile sbom/sbom-image.enriched.json
 ```
 
 **NTIA Minimum Elements (Hoppr)**
 ```
-hopctl validate sbom --sbom sbom/sbom-cyclonedx.json --profile ntia
-hopctl validate sbom --sbom sbom/sbom-enriched.json --profile ntia
+hopctl validate sbom --sbom sbom/sbom-app.normalized.json --profile ntia
+hopctl validate sbom --sbom sbom/sbom-app.enriched.json --profile ntia
+hopctl validate sbom --sbom sbom/sbom-image.normalized.json --profile ntia
+hopctl validate sbom --sbom sbom/sbom-image.enriched.json --profile ntia
 ```
 
 **Hoppr via Docker**
 ```
-docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-cyclonedx.json --profile ntia
-docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-enriched.json --profile ntia
+docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-app.normalized.json --profile ntia
+docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-app.enriched.json --profile ntia
+docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-image.normalized.json --profile ntia
+docker run --rm -v ${PWD}:/data -w /data hoppr/hopctl validate sbom --sbom sbom/sbom-image.enriched.json --profile ntia
 ```
 
 ### 10) Scan Vulnerabilities (Trivy)

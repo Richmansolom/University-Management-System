@@ -49,9 +49,13 @@ $repoRoot = Get-Location
 $sbomPath = Join-Path $repoRoot $SbomDir
 if (-not (Test-Path $sbomPath)) { New-Item -ItemType Directory -Path $sbomPath | Out-Null }
 
-$rawSbom      = Join-Path $sbomPath "sbom-cyclonedx.json"
-$rawSbomNormalized = Join-Path $sbomPath "sbom-cyclonedx.normalized.json"
-$enrichedSbom = Join-Path $sbomPath "sbom-enriched.json"
+$rawSbomName = if ($Mode -eq "container") { "sbom-image.raw.json" } else { "sbom-app.raw.json" }
+$normalizedName = if ($Mode -eq "container") { "sbom-image.normalized.json" } else { "sbom-app.normalized.json" }
+$enrichedName = if ($Mode -eq "container") { "sbom-image.enriched.json" } else { "sbom-app.enriched.json" }
+
+$rawSbom      = Join-Path $sbomPath $rawSbomName
+$rawSbomNormalized = Join-Path $sbomPath $normalizedName
+$enrichedSbom = Join-Path $sbomPath $enrichedName
 $distroSbom   = Join-Path $sbomPath "sbom-distro-cyclonedx.json"
 $appMeta      = Join-Path $repoRoot $AppMetadataPath
 $mergeScript  = Join-Path $repoRoot "merge-sbom.ps1"
@@ -122,9 +126,11 @@ Write-Host "==> Validating SBOMs with CycloneDX-CLI (validator)"
 
 $rawValidateExit = 0
 $enrichedValidateExit = 0
-& $containerCmd run --rm -v "${sbomPath}:/data" cyclonedx/cyclonedx-cli:latest validate --input-file ("/data/" + (Split-Path $rawSbomForValidation -Leaf)) | Out-Host
+$rawLeaf = Split-Path $rawSbomForValidation -Leaf
+$enrichedLeaf = Split-Path $enrichedSbom -Leaf
+& $containerCmd run --rm -v "${sbomPath}:/data" cyclonedx/cyclonedx-cli:latest validate --input-file ("/data/" + $rawLeaf) | Out-Host
 $rawValidateExit = $LASTEXITCODE
-& $containerCmd run --rm -v "${sbomPath}:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json | Out-Host
+& $containerCmd run --rm -v "${sbomPath}:/data" cyclonedx/cyclonedx-cli:latest validate --input-file ("/data/" + $enrichedLeaf) | Out-Host
 $enrichedValidateExit = $LASTEXITCODE
 
 if (Test-Path $ntiaScript) {
@@ -151,16 +157,16 @@ if ($hopctl) {
   $enrichedExit = $LASTEXITCODE
   if ($rawExit -ne 0 -or $enrichedExit -ne 0) {
     Write-Host "==> Hoppr CLI failed; falling back to Hoppr Docker image"
-    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom (Split-Path $rawSbomForValidation -Leaf) --profile ntia --log /data/hoppr-raw.log --verbose | Out-Host
-    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia --log /data/hoppr-enriched.log --verbose | Out-Host
+    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom $rawLeaf --profile ntia --log /data/hoppr-raw.log --verbose | Out-Host
+    & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom $enrichedLeaf --profile ntia --log /data/hoppr-enriched.log --verbose | Out-Host
     $rawExit = $LASTEXITCODE
     $enrichedExit = $LASTEXITCODE
   }
 } else {
   Write-Host "==> Hoppr (hopctl) not installed; using Hoppr Docker image"
-  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom (Split-Path $rawSbomForValidation -Leaf) --profile ntia --log /data/hoppr-raw.log --verbose | Out-Host
+  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom $rawLeaf --profile ntia --log /data/hoppr-raw.log --verbose | Out-Host
   $rawExit = $LASTEXITCODE
-  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia --log /data/hoppr-enriched.log --verbose | Out-Host
+  & $containerCmd run --rm -v "${sbomPath}:/data" -w /data hoppr/hopctl validate sbom --sbom $enrichedLeaf --profile ntia --log /data/hoppr-enriched.log --verbose | Out-Host
   $enrichedExit = $LASTEXITCODE
 }
 

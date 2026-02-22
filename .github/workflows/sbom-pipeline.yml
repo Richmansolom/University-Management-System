@@ -21,7 +21,7 @@ jobs:
       - name: Install PowerShell
         run: |
           sudo apt-get update
-          sudo apt-get install -y powershell jq
+          sudo apt-get install -y powershell jq python3-pip
 
       - name: Prepare output directories
         run: |
@@ -31,56 +31,75 @@ jobs:
         run: |
           docker build -t ums-cpp-app:1.0 .
 
-      - name: Generate SBOM with Syft (CycloneDX)
+      - name: Generate SBOMs with Syft (CycloneDX)
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             anchore/syft:latest ums-cpp-app:1.0 \
-            -o cyclonedx-json > sbom-cyclonedx.json
+            -o cyclonedx-json > sbom-image.raw.json
+          docker run --rm \
+            -v "$PWD:/src" \
+            anchore/syft:latest dir:/src \
+            -o cyclonedx-json > sbom-app.raw.json
 
       - name: Normalize raw SBOM licenses
         shell: pwsh
-        run: ./normalize-sbom-licenses.ps1 -InputSbom sbom-cyclonedx.json -OutputSbom sbom-cyclonedx.normalized.json
+        run: |
+          ./normalize-sbom-licenses.ps1 -InputSbom sbom-app.raw.json -OutputSbom sbom-app.normalized.json
+          ./normalize-sbom-licenses.ps1 -InputSbom sbom-image.raw.json -OutputSbom sbom-image.normalized.json
 
-      - name: Enrich SBOM with custom metadata
+      - name: Enrich SBOMs with custom metadata
         shell: pwsh
-        run: ./merge-sbom.ps1 -InputSbom sbom-cyclonedx.json -AppMetadata app-metadata.json -OutputSbom sbom-enriched.json
+        run: |
+          ./merge-sbom.ps1 -InputSbom sbom-app.raw.json -AppMetadata app-metadata.json -OutputSbom sbom-app.enriched.json
+          ./merge-sbom.ps1 -InputSbom sbom-image.raw.json -AppMetadata app-metadata.json -OutputSbom sbom-image.enriched.json
+
+      - name: Generate OS SBOM (native runner)
+        run: |
+          pip3 install --user distro2sbom
+          export PATH="$HOME/.local/bin:$PATH"
+          distro2sbom --distro auto --system --sbom cyclonedx --format json --output-file sbom-os.json
 
       - name: Validate SBOMs and write requirements summary
         shell: bash
         run: |
           set +e
-          docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-cyclonedx.normalized.json
-          raw_validate=$?
-          docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file /data/sbom-enriched.json
-          enriched_validate=$?
+          validate_sbom() {
+            local name="$1"
+            local raw="$2"
+            local enriched="$3"
+            docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file "/data/$raw"
+            raw_validate=$?
+            docker run --rm -v "$PWD:/data" cyclonedx/cyclonedx-cli:latest validate --input-file "/data/$enriched"
+            enriched_validate=$?
 
-          pwsh -File ./check-ntia.ps1 -SbomFile sbom-enriched.json
-          ntia_local=$?
+            pwsh -File ./check-ntia.ps1 -SbomFile "$enriched"
+            ntia_local=$?
 
-          docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-cyclonedx.normalized.json --profile ntia
-          hoppr_raw=$?
-          docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom sbom-enriched.json --profile ntia
-          hoppr_enriched=$?
+            docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom "$raw" --profile ntia
+            hoppr_raw=$?
+            docker run --rm -v "$PWD:/data" -w /data hoppr/hopctl validate sbom --sbom "$enriched" --profile ntia
+            hoppr_enriched=$?
+
+            {
+              echo "SBOM Requirements Summary ($name)"
+              echo "==============================="
+              echo "CycloneDX validate (raw):      $([ $raw_validate -eq 0 ] && echo PASS || echo FAIL)"
+              echo "CycloneDX validate (enriched): $([ $enriched_validate -eq 0 ] && echo PASS || echo FAIL)"
+              echo "NTIA Minimum Elements (local): $([ $ntia_local -eq 0 ] && echo PASS || echo FAIL)"
+              echo "Hoppr NTIA (raw):              $([ $hoppr_raw -eq 0 ] && echo PASS || echo WARN)"
+              echo "Hoppr NTIA (enriched):         $([ $hoppr_enriched -eq 0 ] && echo PASS || echo WARN)"
+            } > "reports/requirements-summary-${name}.txt"
+
+            if [ $raw_validate -ne 0 ] || [ $enriched_validate -ne 0 ] || [ $ntia_local -ne 0 ]; then
+              echo "SBOM requirement checks failed for $name. See reports/requirements-summary-${name}.txt"
+              exit 1
+            fi
+          }
+
+          validate_sbom "app" "sbom-app.normalized.json" "sbom-app.enriched.json"
+          validate_sbom "image" "sbom-image.normalized.json" "sbom-image.enriched.json"
           set -e
-
-          # Capture Hoppr logs if present
-          mv -f hoppr_*.log reports/ 2>/dev/null || true
-
-          {
-            echo "SBOM Requirements Summary"
-            echo "========================="
-            echo "CycloneDX validate (raw):      $([ $raw_validate -eq 0 ] && echo PASS || echo FAIL)"
-            echo "CycloneDX validate (enriched): $([ $enriched_validate -eq 0 ] && echo PASS || echo FAIL)"
-            echo "NTIA Minimum Elements (local): $([ $ntia_local -eq 0 ] && echo PASS || echo FAIL)"
-            echo "Hoppr NTIA (raw):              $([ $hoppr_raw -eq 0 ] && echo PASS || echo WARN)"
-            echo "Hoppr NTIA (enriched):         $([ $hoppr_enriched -eq 0 ] && echo PASS || echo WARN)"
-          } > reports/requirements-summary.txt
-
-          if [ $raw_validate -ne 0 ] || [ $enriched_validate -ne 0 ] || [ $ntia_local -ne 0 ]; then
-            echo "SBOM requirement checks failed. See reports/requirements-summary.txt"
-            exit 1
-          fi
 
       - name: Scan image vulnerabilities with Trivy
         uses: aquasecurity/trivy-action@0.20.0
@@ -92,38 +111,64 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
-      - name: Vulnerability scan with Grype (SBOM)
+      - name: Vulnerability scan with Grype (SBOMs)
         run: |
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-enriched.json -o json > reports/grype-report.json
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-enriched.json -o table > reports/grype-report.txt
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.enriched.json -o json > reports/grype-app.json
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.enriched.json -o table > reports/grype-app.txt
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.enriched.json -o json > reports/grype-image.json
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.enriched.json -o table > reports/grype-image.txt
+          if [ -f sbom-os.json ]; then
+            docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-os.json -o json > reports/grype-os.json
+            docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-os.json -o table > reports/grype-os.txt
+          fi
 
       - name: Generate vulnerability analysis summary
         run: |
-          jq -r '
-            def count(sev): ( [ .matches[]? | select(.vulnerability.severity == sev) ] | length );
-            "Vulnerability Analysis Summary",
-            "==============================",
-            ("Total: " + ( [ .matches[]? ] | length | tostring )),
-            ("Critical: " + (count("Critical") | tostring)),
-            ("High: " + (count("High") | tostring)),
-            ("Medium: " + (count("Medium") | tostring)),
-            ("Low: " + (count("Low") | tostring)),
-            ("Negligible: " + (count("Negligible") | tostring)),
-            "",
-            "Top Findings (up to 10):",
-            ( [ .matches[]? | "\(.vulnerability.id) | \(.vulnerability.severity) | \(.artifact.name) \(.artifact.version // "")" ][0:10] | .[] )
-          ' reports/grype-report.json > reports/vulnerability-analysis.txt
+          summarize() {
+            local input="$1"
+            local output="$2"
+            jq -r '
+              def count(sev): ( [ .matches[]? | select(.vulnerability.severity == sev) ] | length );
+              "Vulnerability Analysis Summary",
+              "==============================",
+              ("Total: " + ( [ .matches[]? ] | length | tostring )),
+              ("Critical: " + (count("Critical") | tostring)),
+              ("High: " + (count("High") | tostring)),
+              ("Medium: " + (count("Medium") | tostring)),
+              ("Low: " + (count("Low") | tostring)),
+              ("Negligible: " + (count("Negligible") | tostring)),
+              "",
+              "Top Findings (up to 10):",
+              ( [ .matches[]? | "\(.vulnerability.id) | \(.vulnerability.severity) | \(.artifact.name) \(.artifact.version // "")" ][0:10] | .[] )
+            ' "$input" > "$output"
+          }
+
+          summarize reports/grype-app.json reports/vulnerability-analysis-app.txt
+          summarize reports/grype-image.json reports/vulnerability-analysis-image.txt
+          if [ -f reports/grype-os.json ]; then
+            summarize reports/grype-os.json reports/vulnerability-analysis-os.txt
+          fi
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
         with:
           name: sbom-results
           path: |
-            sbom-cyclonedx.json
-            sbom-cyclonedx.normalized.json
-            sbom-enriched.json
-            reports/requirements-summary.txt
-            reports/grype-report.json
-            reports/grype-report.txt
-            reports/vulnerability-analysis.txt
-            reports/hoppr_*.log
+            sbom-app.raw.json
+            sbom-app.normalized.json
+            sbom-app.enriched.json
+            sbom-image.raw.json
+            sbom-image.normalized.json
+            sbom-image.enriched.json
+            sbom-os.json
+            reports/requirements-summary-app.txt
+            reports/requirements-summary-image.txt
+            reports/grype-app.json
+            reports/grype-app.txt
+            reports/grype-image.json
+            reports/grype-image.txt
+            reports/grype-os.json
+            reports/grype-os.txt
+            reports/vulnerability-analysis-app.txt
+            reports/vulnerability-analysis-image.txt
+            reports/vulnerability-analysis-os.txt

@@ -14,8 +14,32 @@ if (-not (Test-Path $SbomFile)) {
 $sbom = Get-Content $SbomFile -Raw | ConvertFrom-Json
 $errors = @()
 
+function Get-RootComponent($sbomObj) {
+    if ($sbomObj.metadata -and $sbomObj.metadata.component) {
+        return $sbomObj.metadata.component
+    }
+    if ($sbomObj.components) {
+        $app = $sbomObj.components | Where-Object { $_.type -eq "application" } | Select-Object -First 1
+        if ($app) { return $app }
+        return $sbomObj.components | Select-Object -First 1
+    }
+    return $null
+}
+
+function Get-SupplierName($sbomObj, $component) {
+    if ($component -and $component.supplier -and $component.supplier.name) {
+        return $component.supplier.name
+    }
+    if ($sbomObj.metadata -and $sbomObj.metadata.supplier -and $sbomObj.metadata.supplier.name) {
+        return $sbomObj.metadata.supplier.name
+    }
+    return $null
+}
+
+$root = Get-RootComponent $sbom
+
 # 1. Supplier
-$supplier = $sbom.metadata.component.supplier.name
+$supplier = Get-SupplierName $sbom $root
 if ([string]::IsNullOrWhiteSpace($supplier)) {
     $errors += "supplier missing"
 } else {
@@ -23,7 +47,8 @@ if ([string]::IsNullOrWhiteSpace($supplier)) {
 }
 
 # 2. Name
-$name = $sbom.metadata.component.name
+$name = $null
+if ($root) { $name = $root.name }
 if ([string]::IsNullOrWhiteSpace($name)) {
     $errors += "name missing"
 } else {
@@ -31,7 +56,8 @@ if ([string]::IsNullOrWhiteSpace($name)) {
 }
 
 # 3. Version
-$version = $sbom.metadata.component.version
+$version = $null
+if ($root) { $version = $root.version }
 if ([string]::IsNullOrWhiteSpace($version)) {
     $errors += "version missing"
 } else {
@@ -47,7 +73,8 @@ if ([string]::IsNullOrWhiteSpace($timestamp)) {
 }
 
 # 5. Component Type
-$type = $sbom.metadata.component.type
+$type = $null
+if ($root) { $type = $root.type }
 if ([string]::IsNullOrWhiteSpace($type)) {
     $errors += "component type missing"
 } else {
