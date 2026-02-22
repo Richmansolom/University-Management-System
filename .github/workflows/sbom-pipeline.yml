@@ -113,10 +113,10 @@ jobs:
 
       - name: Vulnerability scan with Grype (SBOMs)
         run: |
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.enriched.json -o json > reports/grype-app.json
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.enriched.json -o table > reports/grype-app.txt
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.enriched.json -o json > reports/grype-image.json
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.enriched.json -o table > reports/grype-image.txt
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.raw.json -o json > reports/grype-app.json
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.raw.json -o table > reports/grype-app.txt
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.raw.json -o json > reports/grype-image.json
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.raw.json -o table > reports/grype-image.txt
           if [ -f sbom-os.json ]; then
             docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-os.json -o json > reports/grype-os.json
             docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-os.json -o table > reports/grype-os.txt
@@ -127,6 +127,7 @@ jobs:
           summarize() {
             local input="$1"
             local output="$2"
+            if [ ! -f "$input" ]; then echo "No report: $input" > "$output"; return; fi
             jq -r '
               def count(sev): ( [ .matches[]? | select(.vulnerability.severity == sev) ] | length );
               "Vulnerability Analysis Summary",
@@ -140,7 +141,7 @@ jobs:
               "",
               "Top Findings (up to 10):",
               ( [ .matches[]? | "\(.vulnerability.id) | \(.vulnerability.severity) | \(.artifact.name) \(.artifact.version // "")" ][0:10] | .[] )
-            ' "$input" > "$output"
+            ' "$input" > "$output" 2>/dev/null || echo "Parse error" > "$output"
           }
 
           summarize reports/grype-app.json reports/vulnerability-analysis-app.txt

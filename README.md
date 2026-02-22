@@ -22,7 +22,7 @@ This project implements a reproducible SBOM and application-security pipeline fo
 3. Enrich the SBOM with custom metadata describing the application
 4. Validate the raw and enriched SBOMs (CycloneDX-CLI)
 5. Check NTIA Minimum Elements (local script + Hoppr)
-6. Scan for OS and library vulnerabilities (Trivy locally, Grype in CI)
+6. Scan for OS and library vulnerabilities (Trivy image, Grype SBOM in CI)
 7. Publish SBOM and report artifacts (GitHub Actions and/or GitLab CI)
 
 ### 2) Repository Structure
