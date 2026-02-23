@@ -48,12 +48,22 @@ function Normalize-ComponentLicenses($component) {
   # Hoppr: add supplier if missing
   if (-not $component.supplier -or -not $component.supplier.name) {
     $supplierName = Get-DefaultSupplier $component
-    $component.supplier = @{ name = $supplierName; url = @() }
+    $supplierObj = @{ name = $supplierName; url = @() }
+    if ($component.PSObject.Properties.Name -contains "supplier") {
+      $component.supplier = $supplierObj
+    } else {
+      $component | Add-Member -MemberType NoteProperty -Name supplier -Value $supplierObj
+    }
   }
 
   # Hoppr: add licenses if missing
   if (-not $component.licenses -or $component.licenses.Count -eq 0) {
-    $component.licenses = @(@{ license = @{ name = "unknown" }; licensing = @{} })
+    $licensesValue = @(@{ license = @{ name = "unknown" }; licensing = @{} })
+    if ($component.PSObject.Properties.Name -contains "licenses") {
+      $component.licenses = $licensesValue
+    } else {
+      $component | Add-Member -MemberType NoteProperty -Name licenses -Value $licensesValue
+    }
     return
   }
 
@@ -124,10 +134,24 @@ $sbom = $sbomRaw | ConvertFrom-Json
 
 # Hoppr: SBOM metadata must have licenses field
 if (-not $sbom.metadata) {
-  $sbom | Add-Member -MemberType NoteProperty -Name metadata -Value ([ordered]@{}) -Force
-}
-if (-not $sbom.metadata.licenses -or $sbom.metadata.licenses.Count -eq 0) {
-  $sbom.metadata.licenses = @(@{ license = @{ name = "unknown" }; licensing = @{} })
+  $meta = [ordered]@{ licenses = @(@{ license = @{ name = "unknown" }; licensing = @{} }) }
+  $sbom | Add-Member -MemberType NoteProperty -Name metadata -Value $meta -Force
+} else {
+  $licensesValue = @(@{ license = @{ name = "unknown" }; licensing = @{} })
+  $meta = $sbom.metadata
+  if ($meta -is [System.Collections.IDictionary]) {
+    if (-not $meta.Contains("licenses") -or -not $meta.licenses -or $meta.licenses.Count -eq 0) {
+      $meta["licenses"] = $licensesValue
+    }
+  } else {
+    if (-not ($meta.PSObject.Properties.Name -contains "licenses") -or -not $meta.licenses -or $meta.licenses.Count -eq 0) {
+      if ($meta.PSObject.Properties.Name -contains "licenses") {
+        $meta.licenses = $licensesValue
+      } else {
+        $meta | Add-Member -MemberType NoteProperty -Name licenses -Value $licensesValue
+      }
+    }
+  }
 }
 
 foreach ($c in @($sbom.components)) {

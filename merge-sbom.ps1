@@ -46,12 +46,22 @@ function Normalize-ComponentLicenses($component) {
   # Hoppr: add supplier if missing (skip custom component - merge adds it)
   if (-not $component.supplier -or -not $component.supplier.name) {
     $supplierName = Get-DefaultSupplier $component
-    $component.supplier = @{ name = $supplierName; url = @() }
+    $supplierObj = @{ name = $supplierName; url = @() }
+    if ($component.PSObject.Properties.Name -contains "supplier") {
+      $component.supplier = $supplierObj
+    } else {
+      $component | Add-Member -MemberType NoteProperty -Name supplier -Value $supplierObj
+    }
   }
 
   # Hoppr: add licenses if missing
   if (-not $component.licenses -or $component.licenses.Count -eq 0) {
-    $component.licenses = @(@{ license = @{ name = "unknown" }; licensing = @{} })
+    $licensesValue = @(@{ license = @{ name = "unknown" }; licensing = @{} })
+    if ($component.PSObject.Properties.Name -contains "licenses") {
+      $component.licenses = $licensesValue
+    } else {
+      $component | Add-Member -MemberType NoteProperty -Name licenses -Value $licensesValue
+    }
     return
   }
 
@@ -160,9 +170,17 @@ if ($sbom.metadata.PSObject.Properties.Name -contains "supplier") {
 }
 
 # Hoppr: metadata must have licenses field
-if (-not $sbom.metadata.licenses -or $sbom.metadata.licenses.Count -eq 0) {
-  $appLicense = SafeStr $app.license
-  $sbom.metadata.licenses = @(@{ license = @{ name = $appLicense }; licensing = @{} })
+$appLicense = SafeStr $app.license
+$licensesValue = @(@{ license = @{ name = $appLicense }; licensing = @{} })
+$meta = $sbom.metadata
+if (-not $meta.licenses -or $meta.licenses.Count -eq 0) {
+  if ($meta -is [System.Collections.IDictionary]) {
+    $meta["licenses"] = $licensesValue
+  } elseif ($meta.PSObject.Properties.Name -contains "licenses") {
+    $meta.licenses = $licensesValue
+  } else {
+    $meta | Add-Member -MemberType NoteProperty -Name licenses -Value $licensesValue
+  }
 }
 
 # Build a stable bom-ref for the custom app component
