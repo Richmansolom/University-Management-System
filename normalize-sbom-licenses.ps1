@@ -26,20 +26,51 @@ function Ensure-PropertiesArray($component) {
   }
 }
 
+# Infer supplier from purl for OS/distro packages (Hoppr NTIA requirement)
+function Get-DefaultSupplier($component) {
+  $purl = [string]$component.purl
+  if ([string]::IsNullOrWhiteSpace($purl)) { return "Unknown" }
+  if ($purl -match "pkg:deb/ubuntu/") { return "Canonical Ltd." }
+  if ($purl -match "pkg:deb/debian/") { return "Debian Project" }
+  return "Unknown"
+}
+
+# Ensure license entry has Hoppr-required 'licensing' field (CycloneDX optional)
+function Ensure-LicensingField($licEntry) {
+  if (-not $licEntry.PSObject.Properties.Name -contains "licensing") {
+    $licEntry | Add-Member -MemberType NoteProperty -Name licensing -Value @{} -Force
+  }
+}
+
 function Normalize-ComponentLicenses($component) {
-  if (-not $component -or -not $component.licenses) { return }
+  if (-not $component) { return }
+
+  # Hoppr: add supplier if missing
+  if (-not $component.supplier -or -not $component.supplier.name) {
+    $supplierName = Get-DefaultSupplier $component
+    $component.supplier = @{ name = $supplierName; url = @() }
+  }
+
+  # Hoppr: add licenses if missing
+  if (-not $component.licenses -or $component.licenses.Count -eq 0) {
+    $component.licenses = @(@{ license = @{ name = "unknown" }; licensing = @{} })
+    return
+  }
+
   $normalized = @()
   $licenseNames = @()
   foreach ($lic in @($component.licenses)) {
     if ($null -eq $lic) { continue }
 
     if ($lic -is [string]) {
-      $normalized += @{ license = @{ name = [string]$lic } }
+      $entry = @{ license = @{ name = [string]$lic }; licensing = @{} }
+      $normalized += $entry
       $licenseNames += [string]$lic
       continue
     }
 
     if ($lic.PSObject.Properties.Name -contains "expression") {
+      Ensure-LicensingField $lic
       $normalized += $lic
       $licenseNames += [string]$lic.expression
       continue
@@ -66,6 +97,8 @@ function Normalize-ComponentLicenses($component) {
       $licenseObj.PSObject.Properties.Remove("id")
     }
 
+    Ensure-LicensingField $lic
+
     if ($licenseObj.name) {
       $licenseNames += [string]$licenseObj.name
     }
@@ -75,7 +108,7 @@ function Normalize-ComponentLicenses($component) {
   if ($licenseNames.Count -gt 1) {
     Ensure-PropertiesArray $component
     $component.properties += @{ name = "license.list"; value = ($licenseNames -join ", ") }
-    $component.licenses = @(@{ license = @{ name = "Multiple" } })
+    $component.licenses = @(@{ license = @{ name = "Multiple" }; licensing = @{} })
   } else {
     $component.licenses = $normalized
   }
@@ -88,6 +121,14 @@ if ([string]::IsNullOrWhiteSpace($sbomRaw)) {
 }
 
 $sbom = $sbomRaw | ConvertFrom-Json
+
+# Hoppr: SBOM metadata must have licenses field
+if (-not $sbom.metadata) {
+  $sbom | Add-Member -MemberType NoteProperty -Name metadata -Value ([ordered]@{}) -Force
+}
+if (-not $sbom.metadata.licenses -or $sbom.metadata.licenses.Count -eq 0) {
+  $sbom.metadata.licenses = @(@{ license = @{ name = "unknown" }; licensing = @{} })
+}
 
 foreach ($c in @($sbom.components)) {
   Normalize-ComponentLicenses $c

@@ -13,6 +13,6 @@
   "repository": "https://github.com/Richmansolom/university-management-system",
   "build_system": "Docker + Makefile",
   "description": "A console-based university management system written in C++",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "entry_point": "./university_app"
 }
