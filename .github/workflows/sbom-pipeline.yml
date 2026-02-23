@@ -58,7 +58,8 @@ jobs:
         run: |
           pip3 install --user distro2sbom
           export PATH="$HOME/.local/bin:$PATH"
-          distro2sbom --distro auto --system --sbom cyclonedx --format json --output-file sbom-os.json
+          distro2sbom --distro auto --system --sbom cyclonedx --format json --output-file sbom-os.json || true
+          [ -f sbom-os.json ] && mv sbom-os.json reports/
 
       - name: Validate SBOMs and write requirements summary
         shell: bash
@@ -113,20 +114,28 @@ jobs:
 
       - name: Vulnerability scan with Grype (SBOMs)
         run: |
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.raw.json -o json > reports/grype-app.json
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.raw.json -o table > reports/grype-app.txt
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.raw.json -o json > reports/grype-image.json
-          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.raw.json -o table > reports/grype-image.txt
-          if [ -f sbom-os.json ]; then
-            docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-os.json -o json > reports/grype-os.json
-            docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-os.json -o table > reports/grype-os.txt
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.raw.json -o json > reports/grype-app.json || true
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-app.raw.json -o table > reports/grype-app.txt || true
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.raw.json -o json > reports/grype-image.json || true
+          docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/sbom-image.raw.json -o table > reports/grype-image.txt || true
+          if [ -f reports/sbom-os.json ]; then
+            docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/reports/sbom-os.json -o json > reports/grype-os.json || true
+            docker run --rm -v "$PWD:/data" anchore/grype:latest sbom:/data/reports/sbom-os.json -o table > reports/grype-os.txt || true
+          fi
+
+      - name: Trivy SBOM scan (fallback if Grype failed)
+        run: |
+          if ! jq -e '.matches' reports/grype-app.json >/dev/null 2>&1; then
+            docker run --rm -v "$PWD:/data" -w /data -e TRIVY_DB_REPOSITORY=ghcr.io/aquasecurity/trivy-db aquasec/trivy:latest sbom sbom-app.raw.json -f json -o reports/trivy-app.json
+          fi
+          if ! jq -e '.matches' reports/grype-image.json >/dev/null 2>&1; then
+            docker run --rm -v "$PWD:/data" -w /data -e TRIVY_DB_REPOSITORY=ghcr.io/aquasecurity/trivy-db aquasec/trivy:latest sbom sbom-image.raw.json -f json -o reports/trivy-image.json
           fi
 
       - name: Generate vulnerability analysis summary
         run: |
-          summarize() {
-            local input="$1"
-            local output="$2"
+          summarize_grype() {
+            local input="$1" output="$2"
             if [ ! -f "$input" ]; then echo "No report: $input" > "$output"; return; fi
             jq -r '
               def count(sev): ( [ .matches[]? | select(.vulnerability.severity == sev) ] | length );
@@ -141,13 +150,37 @@ jobs:
               "",
               "Top Findings (up to 10):",
               ( [ .matches[]? | "\(.vulnerability.id) | \(.vulnerability.severity) | \(.artifact.name) \(.artifact.version // "")" ][0:10] | .[] )
-            ' "$input" > "$output" 2>/dev/null || echo "Parse error" > "$output"
+            ' "$input" > "$output" 2>/dev/null || return 1
           }
-
-          summarize reports/grype-app.json reports/vulnerability-analysis-app.txt
-          summarize reports/grype-image.json reports/vulnerability-analysis-image.txt
-          if [ -f reports/grype-os.json ]; then
-            summarize reports/grype-os.json reports/vulnerability-analysis-os.txt
+          summarize_trivy() {
+            local input="$1" output="$2"
+            if [ ! -f "$input" ]; then echo "No report: $input" > "$output"; return; fi
+            jq -r '
+              [ .Results[]?.Vulnerabilities[]? ] as $v |
+              def count(sev): ( [ $v[]? | select(.Severity == sev) ] | length );
+              "Vulnerability Analysis Summary (Trivy)",
+              "==============================",
+              ("Total: " + ( $v | length | tostring )),
+              ("Critical: " + (count("CRITICAL") | tostring)),
+              ("High: " + (count("HIGH") | tostring)),
+              ("Medium: " + (count("MEDIUM") | tostring)),
+              ("Low: " + (count("LOW") | tostring)),
+              "",
+              "Top Findings (up to 10):",
+              ( [ $v[]? | "\(.VulnerabilityID) | \(.Severity) | \(.PkgName) \(.InstalledVersion // "")" ][0:10] | .[] )
+            ' "$input" > "$output" 2>/dev/null || return 1
+          }
+          for name in app image; do
+            if summarize_grype "reports/grype-${name}.json" "reports/vulnerability-analysis-${name}.txt"; then
+              echo "Used Grype for ${name}"
+            elif summarize_trivy "reports/trivy-${name}.json" "reports/vulnerability-analysis-${name}.txt"; then
+              echo "Used Trivy fallback for ${name}"
+            else
+              echo "No vulnerability report for ${name}" > "reports/vulnerability-analysis-${name}.txt"
+            fi
+          done
+          if [ -f reports/grype-os.json ] && jq -e '.matches' reports/grype-os.json >/dev/null 2>&1; then
+            summarize_grype reports/grype-os.json reports/vulnerability-analysis-os.txt || true
           fi
 
       - name: Upload SBOM artifacts
@@ -161,15 +194,5 @@ jobs:
             sbom-image.raw.json
             sbom-image.normalized.json
             sbom-image.enriched.json
-            sbom-os.json
-            reports/requirements-summary-app.txt
-            reports/requirements-summary-image.txt
-            reports/grype-app.json
-            reports/grype-app.txt
-            reports/grype-image.json
-            reports/grype-image.txt
-            reports/grype-os.json
-            reports/grype-os.txt
-            reports/vulnerability-analysis-app.txt
-            reports/vulnerability-analysis-image.txt
-            reports/vulnerability-analysis-os.txt
+            reports/
+        if-no-files-found: error
